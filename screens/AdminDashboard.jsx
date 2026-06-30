@@ -1,0 +1,979 @@
+import React, { useState, useEffect } from 'react';
+import {
+  View, Text, TextInput, TouchableOpacity, StyleSheet,
+  Alert, ActivityIndicator, ScrollView, Modal,
+  RefreshControl, Linking, StatusBar, Platform
+} from 'react-native';
+import {
+  getLatestLocations, getAllTrackingStatus, getVisits,
+  getDeliveries, getNotPaidInvoices, getPaidInvoices,
+  approvePayment, getNotifications, markNotificationsRead,
+  createSalesman, getSalesmen, deleteSalesman, removeToken,
+  getSalesmanCredentials
+} from '../services/api';
+
+const C = {
+  red: '#C0392B', redD: '#A93226', redL: '#FADBD8',
+  navy: '#2C3E50', green: '#27AE60', greenL: '#D5F5E3',
+  amber: '#F39C12', amberL: '#FDEBD0', destroy: '#EA4335',
+  bg: '#F4F5F7', white: '#FFFFFF',
+  t1: '#1A252F', t2: '#5D6D7E', t3: '#AAB7C4',
+};
+
+const COLORS = ['#8E44AD','#2980B9','#16A085','#D35400','#1A5276','#7D6608'];
+
+const shadow = {
+  shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+  shadowOpacity: 0.07, shadowRadius: 10, elevation: 3,
+};
+
+function formatDate(ts) {
+  if (!ts) return '';
+  // Convert to Oman time (UTC+4)
+  const d = new Date(new Date(ts).getTime() + (4 * 60 * 60 * 1000));
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const hh = d.getUTCHours().toString().padStart(2,'0');
+  const mm = d.getUTCMinutes().toString().padStart(2,'0');
+  return `${d.getUTCDate()} ${months[d.getUTCMonth()]}, ${hh}:${mm}`;
+}
+
+function timeAgo(ts) {
+  const diff = Math.floor((Date.now() - new Date(ts)) / 1000);
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
+function formatDateFull(ts) {
+  if (!ts) return '';
+  const d = new Date(new Date(ts).getTime() + (4 * 60 * 60 * 1000));
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const hh = d.getUTCHours().toString().padStart(2,'0');
+  const mm = d.getUTCMinutes().toString().padStart(2,'0');
+  return `${days[d.getUTCDay()]} ${d.getUTCDate()} ${months[d.getUTCMonth()]}, ${hh}:${mm}`;
+}
+
+function initials(name) {
+  return (name || '').split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase();
+}
+
+const TABS = [
+  { key: 'salesmen', label: 'Salesmen' },
+  { key: 'visits', label: 'Visits' },
+  { key: 'deliveries', label: 'Deliveries' },
+  { key: 'notpaid', label: 'Not Paid' },
+  { key: 'paid', label: 'Paid' },
+];
+
+const FILTERS = [
+  { key: 'today', label: 'Today' },
+  { key: 'yesterday', label: 'Yesterday' },
+  { key: 'week', label: 'This Week' },
+  { key: 'month', label: 'This Month' },
+  { key: 'older', label: 'Older' },
+];
+
+const DETAIL_FILTERS = [
+  { key: 'today', label: 'Today' },
+  { key: 'yesterday', label: 'Yesterday' },
+  { key: 'week', label: 'This Week' },
+  { key: 'month', label: 'This Month' },
+  { key: 'all', label: 'All Time' },
+];
+
+export default function AdminDashboard({ navigation }) {
+  const [tab, setTab] = useState('salesmen');
+  const [salesmen, setSalesmen] = useState([]);
+  const [trackingStatus, setTrackingStatus] = useState([]);
+  const [locations, setLocations] = useState([]);
+  const [allVisits, setAllVisits] = useState([]);
+  const [allDeliveries, setAllDeliveries] = useState([]);
+  const [notPaid, setNotPaid] = useState([]);
+  const [paid, setPaid] = useState([]);
+  const [notifications, setNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Filters & search
+  const [visitFilter, setVisitFilter] = useState('today');
+  const [deliveryFilter, setDeliveryFilter] = useState('today');
+  const [visitSearch, setVisitSearch] = useState('');
+  const [deliverySearch, setDeliverySearch] = useState('');
+  const [notPaidSearch, setNotPaidSearch] = useState('');
+  const [paidSearch, setPaidSearch] = useState('');
+  const [paidFilter, setPaidFilter] = useState('month');
+
+  // Modals
+  const [notifModal, setNotifModal] = useState(false);
+  const [addModal, setAddModal] = useState(false);
+  const [detailModal, setDetailModal] = useState(false);
+  const [selectedSalesman, setSelectedSalesman] = useState(null);
+  const [salesmanVisits, setSalesmanVisits] = useState([]);
+  const [salesmanDeliveries, setSalesmanDeliveries] = useState([]);
+  const [detailFilter, setDetailFilter] = useState('today');
+
+  // Add form
+  const [newName, setNewName] = useState('');
+  const [newEmail, setNewEmail] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+    const [addLoading, setAddLoading] = useState(false);
+  const [credentials, setCredentials] = useState(null);
+  const [credLoading, setCredLoading] = useState(false);
+
+  useEffect(() => {
+    loadAll();
+    const iv = setInterval(loadAll, 30000);
+    return () => clearInterval(iv);
+  }, []);
+
+  useEffect(() => { loadVisits(); }, [visitFilter]);
+  useEffect(() => { loadDeliveries(); }, [deliveryFilter]);
+  useEffect(() => { loadPaid(); }, [paidFilter]);
+  useEffect(() => {
+    if (selectedSalesman?.id) loadSalesmanDetail();
+  }, [detailFilter, selectedSalesman?.id]);
+
+const loadAll = async () => {
+    try {
+      const [sm, ts, locs, np, notifs] = await Promise.all([
+        getSalesmen(), getAllTrackingStatus(), getLatestLocations(),
+        getNotPaidInvoices(), getNotifications(),
+      ]);
+      setSalesmen(sm); setTrackingStatus(ts); setLocations(locs);
+      setNotPaid(np); setNotifications(notifs);
+      setUnreadCount(notifs.filter(n => !n.is_read).length);
+    } catch (e) {
+      console.log('loadAll error:', e?.response?.status, e?.response?.data);
+      if (e?.response?.status === 401) {
+        await removeToken();
+        navigation.replace('Login');
+      }
+    }
+  };
+
+  const loadVisits = async () => {
+    try { setAllVisits(await getVisits(visitFilter)); } catch (e) { console.log(e); }
+  };
+
+  const loadDeliveries = async () => {
+    try { setAllDeliveries(await getDeliveries(deliveryFilter)); } catch (e) { console.log(e); }
+  };
+
+  const loadPaid = async () => {
+    try { setPaid(await getPaidInvoices(paidFilter)); } catch (e) { console.log(e); }
+  };
+
+  const loadSalesmanDetail = async () => {
+    if (!selectedSalesman) return;
+    try {
+      const [v, d] = await Promise.all([
+        getVisits(detailFilter === 'all' ? undefined : detailFilter, selectedSalesman.id),
+        getDeliveries(detailFilter === 'all' ? undefined : detailFilter, selectedSalesman.id),
+      ]);
+      setSalesmanVisits(v || []);
+      setSalesmanDeliveries(d || []);
+    } catch (e) {
+      console.log('loadSalesmanDetail error:', e?.response?.data || e.message);
+    }
+  };
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await loadAll(); await loadVisits(); await loadDeliveries(); await loadPaid();
+    setRefreshing(false);
+  };
+
+  const handleOpenNotifs = async () => {
+    setNotifModal(true);
+    await markNotificationsRead();
+    setUnreadCount(0);
+    setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
+  };
+
+const handleAddSalesman = async () => {
+    if (!newName || !newEmail || !newPassword)
+      return Alert.alert('Error', 'All fields are required');
+    setAddLoading(true);
+    try {
+      await createSalesman(newName, newEmail, newPassword);
+      setAddModal(false);
+      setNewName(''); setNewEmail(''); setNewPassword('');
+      // Force reload salesmen immediately
+      const sm = await getSalesmen();
+      setSalesmen(sm);
+      const ts = await getAllTrackingStatus();
+      setTrackingStatus(ts);
+      Alert.alert('Success', `Account created for ${newName}`);
+    } catch (e) {
+      Alert.alert('Error', e.response?.data?.error || 'Failed to create account');
+    } finally { setAddLoading(false); }
+  };
+
+  const handleDeleteSalesman = (s) => {
+  Alert.alert(
+    'Delete Salesman',
+    `Delete ${s.name}? Their visit and delivery records will be kept.`,
+    [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete', style: 'destructive', onPress: async () => {
+          try {
+            await deleteSalesman(s.id);
+            const sm = await getSalesmen();
+            setSalesmen(sm);
+            const ts = await getAllTrackingStatus();
+            setTrackingStatus(ts);
+            setDetailModal(false);
+          } catch (e) {
+            Alert.alert('Error', 'Failed to delete salesman');
+          }
+        }
+      }
+    ]
+  );
+};
+
+    const handleViewCredentials = async (s) => {
+    setCredLoading(true);
+    setCredentials(null);
+    try {
+      const data = await getSalesmanCredentials(s.id);
+      setCredentials(data);
+    } catch (e) {
+      Alert.alert('Error', 'Could not load credentials');
+    } finally { setCredLoading(false); }
+  };
+
+  const handleApprove = async (inv) => {
+    Alert.alert('Approve Payment', `Approve ${inv.invoice_number}?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Approve', onPress: async () => {
+          try {
+            await approvePayment(inv.id);
+            // Remove from notPaid, reload paid
+            setNotPaid(prev => prev.filter(i => i.id !== inv.id));
+            loadPaid();
+            loadAll();
+          } catch (e) { Alert.alert('Error', 'Failed to approve'); }
+        }
+      }
+    ]);
+  };
+
+  const openMap = (lat, lng, name) =>
+    Linking.openURL(`https://www.google.com/maps?q=${lat},${lng}&label=${name}`);
+
+  const getTracking = (id) => trackingStatus.find(t => t.user_id === id);
+  const getLocation = (id) => locations.find(l => l.user_id === id);
+
+  // Search helper — OR logic across fields
+  const searchFilter = (list, term, keys) => {
+    if (!term.trim()) return list;
+    const t = term.toLowerCase();
+    return list.filter(item => keys.some(k => (item[k] || item.users?.name || '').toLowerCase().includes(t)));
+  };
+
+  const filteredVisits = searchFilter(allVisits, visitSearch,
+    ['company_name','contact_name','mobile','email_id']);
+  const filteredDeliveries = searchFilter(allDeliveries, deliverySearch,
+    ['invoice_number','delivered_person','payment_method']);
+  const filteredNotPaid = searchFilter(notPaid, notPaidSearch,
+    ['invoice_number','delivered_person']);
+  const filteredPaid = searchFilter(paid, paidSearch,
+    ['invoice_number','delivered_person','payment_method']);
+
+  const filterScrollRefs = {};
+  const FilterBar = ({ selected, onSelect, filters = FILTERS, scrollId = 'default' }) => {
+    const selectedIndex = filters.findIndex(f => f.key === selected);
+    return (
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.filterScroll}
+        contentContainerStyle={{ paddingRight: 8 }}
+        ref={ref => { filterScrollRefs[scrollId] = ref; }}
+        onContentSizeChange={() => {
+          if (selectedIndex > 2 && filterScrollRefs[scrollId]) {
+            filterScrollRefs[scrollId].scrollToEnd({ animated: false });
+          } else if (selectedIndex <= 1 && filterScrollRefs[scrollId]) {
+            filterScrollRefs[scrollId].scrollTo({ x: 0, animated: false });
+          }
+        }}>
+        {filters.map(f => (
+          <TouchableOpacity key={f.key}
+            style={[styles.filterPill, selected === f.key && styles.filterPillOn]}
+            onPress={() => onSelect(f.key)}>
+            <Text style={[styles.filterPillTxt, selected === f.key && styles.filterPillTxtOn]}>{f.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+    );
+  };
+
+  const SearchBar = ({ value, onChange, placeholder }) => (
+    <View style={styles.searchBar}>
+      <Text style={styles.searchIcon}>🔍</Text>
+      <TextInput
+        style={styles.searchInput}
+        placeholder={placeholder}
+        placeholderTextColor={C.t3}
+        value={value}
+        onChangeText={onChange}
+        clearButtonMode="while-editing"
+      />
+    </View>
+  );
+
+  const pmLabel = (pm) => {
+    if (pm === 'bank') return 'Bank Transfer';
+    if (pm === 'not_paid') return 'Not Paid';
+    if (!pm) return '—';
+    return pm.charAt(0).toUpperCase() + pm.slice(1);
+  };
+
+  const salesmanColor = (id, fallbackName) => {
+    const idx = salesmen.findIndex(s => s.id === id);
+    if (idx >= 0) return COLORS[idx % COLORS.length];
+    // Deleted salesman — derive consistent color from name string
+    if (fallbackName) {
+      let hash = 0;
+      for (let i = 0; i < fallbackName.length; i++) hash += fallbackName.charCodeAt(i);
+      return COLORS[hash % COLORS.length];
+    }
+    return '#AAB7C4';
+  };
+
+  return (
+    <View style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor={C.white} />
+
+      {/* Header */}
+      <View style={styles.header}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.title}>Admin Dashboard</Text>
+          <Text style={styles.subtitle}>Al Sahal Printing Press</Text>
+        </View>
+        <View style={styles.headerActions}>
+          <TouchableOpacity onPress={handleOpenNotifs} style={styles.notifWrap}>
+            <Text style={styles.notifIcon}>🔔</Text>
+            {unreadCount > 0 && (
+              <View style={styles.notifBadge}>
+                <Text style={styles.notifBadgeTxt}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => Alert.alert('Sign out', 'Are you sure?', [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Sign Out', style: 'destructive', onPress: async () => { await removeToken(); navigation.replace('Login'); } }
+            ])}
+            style={styles.logoutBtn}>
+            <Text style={styles.logoutTxt}>Sign Out</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Stat cards */}
+      <View style={styles.statsRow}>
+        <View style={[styles.statCard, { borderTopColor: C.navy }]}>
+          <Text style={[styles.statVal, { color: C.navy }]}>{salesmen.length}</Text>
+          <Text style={styles.statLbl}>Salesmen</Text>
+        </View>
+        <View style={[styles.statCard, { borderTopColor: C.green }]}>
+          <Text style={[styles.statVal, { color: C.green }]}>{trackingStatus.filter(t => t.is_tracking).length}</Text>
+          <Text style={styles.statLbl}>Active</Text>
+        </View>
+        <View style={[styles.statCard, { borderTopColor: C.red }]}>
+          <Text style={[styles.statVal, { color: C.red }]}>{notPaid.filter(i => i.status === 'not_paid').length}</Text>
+          <Text style={styles.statLbl}>Not Paid</Text>
+        </View>
+      </View>
+
+      {/* Tab nav */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.navScroll}>
+        {TABS.map(t => (
+          <TouchableOpacity key={t.key}
+            style={[styles.navTab, tab === t.key && styles.navTabOn]}
+            onPress={() => setTab(t.key)}>
+            <Text style={[styles.navTabTxt, tab === t.key && styles.navTabTxtOn]}>{t.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+
+      {/* ── Salesmen tab ── */}
+      {tab === 'salesmen' && (
+        <ScrollView style={styles.scroll}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
+          <TouchableOpacity style={styles.addSalesBtn} onPress={() => setAddModal(true)}>
+            <Text style={styles.addSalesTxt}>+ Add New Salesman</Text>
+          </TouchableOpacity>
+          <View style={styles.salesGrid}>
+            {salesmen.map((s, i) => {
+              const tr = getTracking(s.id);
+              const loc = getLocation(s.id);
+              const isOn = tr?.is_tracking;
+              const col = COLORS[i % COLORS.length];
+              return (
+                <TouchableOpacity key={s.id}
+                  style={[styles.salesCard, { borderLeftColor: col }]}
+                  onPress={() => { setSelectedSalesman(s); setDetailFilter('today'); setDetailModal(true); }}>
+                  <View style={styles.salesCardTop}>
+                    <View style={[styles.av, { backgroundColor: col }]}>
+                      <Text style={styles.avTxt}>{initials(s.name)}</Text>
+                    </View>
+                    <View style={[styles.trackDotWrap, { backgroundColor: isOn ? C.greenL : C.redL }]}>
+                      <View style={[styles.trackDot, { backgroundColor: isOn ? C.green : C.destroy }]} />
+                    </View>
+                  </View>
+                  <Text style={styles.salesName} numberOfLines={1}>{s.name}</Text>
+                  <Text style={styles.salesSub}>{isOn ? 'Tracking ON' : 'Tracking OFF'}</Text>
+                  {loc && isOn && (
+                    <TouchableOpacity style={styles.mapBtn} onPress={() => openMap(loc.lat, loc.lng, s.name)}>
+                      <Text style={styles.mapBtnTxt}>📍 Live location</Text>
+                    </TouchableOpacity>
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </ScrollView>
+      )}
+
+      {/* ── Visits tab ── */}
+      {tab === 'visits' && (
+        <>
+          <FilterBar selected={visitFilter} onSelect={setVisitFilter} scrollId="visits" />
+          <View style={styles.searchWrap}>
+            <SearchBar value={visitSearch} onChange={setVisitSearch}
+              placeholder="Search company, salesman, contact…" />
+          </View>
+          <ScrollView style={styles.scroll}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
+            <Text style={styles.resultCount}>{filteredVisits.length} visits</Text>
+            {filteredVisits.map((v, i) => {
+              const col = salesmanColor(v.user_id, v.salesman_name);
+              return (
+                <View key={v.id} style={[styles.card, styles.cardLeft, { borderLeftColor: col }]}>
+                  <View style={styles.cardTopRow}>
+                    <Text style={styles.cardTitle}>{v.company_name}</Text>
+                    <View style={[styles.salesBadge, { backgroundColor: salesmanColor(v.user_id, v.salesman_name) + '22' }]}>
+                      <Text style={[styles.salesBadgeTxt, { color: salesmanColor(v.user_id, v.salesman_name) }]}>
+                        {v.users?.name?.split(' ')[0] || v.salesman_name?.split(' ')[0] || 'Deleted'}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={styles.cardDetail}>{v.contact_name}  ·  {v.mobile}</Text>
+                  {v.email_id ? <Text style={styles.cardDetail}>{v.email_id}</Text> : null}
+                  {v.quotation && (
+                    <View style={[styles.badge, { backgroundColor: '#EAF0FB', marginTop: 6 }]}>
+                      <Text style={[styles.badgeTxt, { color: '#1A5276' }]}>Quotation: {v.quotation_description}</Text>
+                    </View>
+                  )}
+{v.lat && v.lng && (
+                    <TouchableOpacity style={styles.mapBtn}
+                      onPress={() => Linking.openURL(`https://www.google.com/maps?q=${v.lat},${v.lng}&label=${v.company_name}`)}>
+                      <Text style={styles.mapBtnTxt}>📍 View visit location</Text>
+                    </TouchableOpacity>
+                  )}
+                  <Text style={styles.cardTime}>{formatDate(v.visited_at)}</Text>
+                </View>
+              );
+            })}
+            {filteredVisits.length === 0 && <Text style={styles.empty}>No visits found</Text>}
+            <View style={{ height: 20 }} />
+          </ScrollView>
+        </>
+      )}
+
+      {/* ── Deliveries tab ── */}
+      {tab === 'deliveries' && (
+        <>
+          <FilterBar selected={deliveryFilter} onSelect={setDeliveryFilter} scrollId="deliveries" />
+
+          <View style={styles.searchWrap}>
+            <SearchBar value={deliverySearch} onChange={setDeliverySearch}
+              placeholder="Search invoice, salesman, company…" />
+          </View>
+          <ScrollView style={styles.scroll}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
+            <Text style={styles.resultCount}>{filteredDeliveries.length} deliveries</Text>
+            {filteredDeliveries.map((d, i) => {
+              const col = salesmanColor(d.user_id, d.salesman_name);
+              const sc = d.status === 'paid'
+                ? { bg: C.greenL, txt: '#145A32', lbl: '✓ Paid' }
+                : d.status === 'pending_approval'
+                ? { bg: C.amberL, txt: '#784212', lbl: '⏳ Pending' }
+                : { bg: C.redL, txt: C.redD, lbl: '✗ Not Paid' };
+              return (
+                <View key={d.id} style={[styles.card, styles.cardLeft, { borderLeftColor: col }]}>
+                  <View style={styles.cardTopRow}>
+                    <Text style={styles.cardTitle}>{d.invoice_number}</Text>
+                    <View style={[styles.salesBadge, { backgroundColor: col + '22' }]}>
+                      <Text style={[styles.salesBadgeTxt, { color: col }]}>
+                        {d.users?.name?.split(' ')[0] || d.salesman_name?.split(' ')[0] || 'Deleted'}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={styles.cardDetail}>Delivered to: {d.delivered_person}</Text>
+                  <Text style={styles.cardDetail}>Payment: {pmLabel(d.payment_method)}</Text>
+                  <View style={[styles.badge, { backgroundColor: sc.bg, marginTop: 6 }]}>
+                    <Text style={[styles.badgeTxt, { color: sc.txt }]}>{sc.lbl}</Text>
+                  </View>
+{d.lat && d.lng && (
+                    <TouchableOpacity style={styles.mapBtn}
+                      onPress={() => Linking.openURL(`https://www.google.com/maps?q=${d.lat},${d.lng}&label=${d.invoice_number}`)}>
+                      <Text style={styles.mapBtnTxt}>📍 View delivery location</Text>
+                    </TouchableOpacity>
+                  )}
+                  <Text style={styles.cardTime}>{formatDate(d.created_at)}</Text>
+                </View>
+              );
+            })}
+            {filteredDeliveries.length === 0 && <Text style={styles.empty}>No deliveries found</Text>}
+            <View style={{ height: 20 }} />
+          </ScrollView>
+        </>
+      )}
+
+      {/* ── Not Paid tab ── */}
+      {tab === 'notpaid' && (
+        <>
+          <View style={styles.searchWrap}>
+            <SearchBar value={notPaidSearch} onChange={setNotPaidSearch}
+              placeholder="Search invoice, salesman, company…" />
+          </View>
+          <ScrollView style={styles.scroll}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
+            <Text style={styles.resultCount}>{filteredNotPaid.length} unpaid invoices</Text>
+            {filteredNotPaid.map((inv) => {
+              const isPending = inv.status === 'pending_approval';
+              const col = salesmanColor(inv.user_id, inv.salesman_name);
+              return (
+                <View key={inv.id} style={[styles.card, styles.cardLeft,
+                  { borderLeftColor: isPending ? C.amber : C.red }]}>
+                  <View style={styles.cardTopRow}>
+                    <Text style={styles.cardTitle}>{inv.invoice_number}</Text>
+                    <View style={[styles.salesBadge, { backgroundColor: col + '22' }]}>
+                      <Text style={[styles.salesBadgeTxt, { color: col }]}>
+                        {inv.users?.name?.split(' ')[0] || inv.salesman_name?.split(' ')[0] || 'Deleted'}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={styles.cardDetail}>Delivered to: {inv.delivered_person}</Text>
+                  {isPending && <Text style={styles.cardDetail}>Method claimed: {pmLabel(inv.payment_method)}</Text>}
+                  <View style={[styles.badge,
+                    { backgroundColor: isPending ? C.amberL : C.redL, marginTop: 6 }]}>
+                    <Text style={[styles.badgeTxt, { color: isPending ? '#784212' : C.redD }]}>
+                      {isPending ? '⏳ Pending approval' : '✗ Not Paid'}
+                    </Text>
+                  </View>
+                  {isPending && (
+                    <TouchableOpacity style={styles.approveBtn} onPress={() => handleApprove(inv)}>
+                      <Text style={styles.approveTxt}>✓ Approve Payment</Text>
+                    </TouchableOpacity>
+                  )}
+                  <Text style={styles.cardTime}>{formatDate(inv.created_at)}</Text>
+                </View>
+              );
+            })}
+            {filteredNotPaid.length === 0 && <Text style={styles.empty}>No unpaid invoices 🎉</Text>}
+            <View style={{ height: 20 }} />
+          </ScrollView>
+        </>
+      )}
+
+      {/* ── Paid tab ── */}
+      {tab === 'paid' && (
+        <>
+<FilterBar selected={paidFilter} onSelect={setPaidFilter} scrollId="paid"
+            filters={[
+              { key: 'week', label: 'This Week' },
+              { key: 'month', label: 'This Month' },
+              { key: 'older', label: 'Older' },
+            ]} />
+          <View style={styles.searchWrap}>
+            <SearchBar value={paidSearch} onChange={setPaidSearch}
+              placeholder="Search invoice, salesman, method…" />
+          </View>
+          <ScrollView style={styles.scroll}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
+            <Text style={styles.resultCount}>{filteredPaid.length} paid invoices</Text>
+            {filteredPaid.map((inv) => {
+              const col = salesmanColor(inv.user_id, inv.salesman_name);
+              return (
+                <View key={inv.id} style={[styles.card, styles.cardLeft, { borderLeftColor: C.green }]}>
+                  <View style={styles.cardTopRow}>
+                    <Text style={styles.cardTitle}>{inv.invoice_number}</Text>
+                    <View style={[styles.salesBadge, { backgroundColor: col + '22' }]}>
+                      <Text style={[styles.salesBadgeTxt, { color: col }]}>
+                        {inv.users?.name?.split(' ')[0] || inv.salesman_name?.split(' ')[0] || 'Deleted'}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={styles.cardDetail}>Delivered to: {inv.delivered_person}</Text>
+                  <Text style={styles.cardDetail}>Payment: {pmLabel(inv.payment_method)}</Text>
+                  {inv.approved_at && <Text style={styles.cardDetail}>Approved: {formatDate(inv.approved_at)}</Text>}
+                  <View style={[styles.badge, { backgroundColor: C.greenL, marginTop: 6 }]}>
+                    <Text style={[styles.badgeTxt, { color: '#145A32' }]}>✓ Paid & Approved</Text>
+                  </View>
+                  <Text style={styles.cardTime}>{formatDate(inv.created_at)}</Text>
+                </View>
+              );
+            })}
+            {filteredPaid.length === 0 && <Text style={styles.empty}>No paid invoices found</Text>}
+            <View style={{ height: 20 }} />
+          </ScrollView>
+        </>
+      )}
+
+      {/* ── Notifications Modal ── */}
+      <Modal visible={notifModal} animationType="slide" transparent>
+        <View style={styles.overlay}>
+          <View style={[styles.sheet, { maxHeight: '82%' }]}>
+            <View style={styles.sheetHandle} />
+            <View style={styles.notifHeader}>
+              <Text style={styles.sheetTitle}>Notifications</Text>
+              <TouchableOpacity onPress={() => setNotifModal(false)}>
+                <Text style={styles.closeBtn}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView>
+              {notifications.length === 0 && <Text style={styles.empty}>No notifications</Text>}
+              {notifications.slice(0, 6).map(n => (
+                <View key={n.id} style={[styles.notifItem,
+                  { borderLeftColor: n.type === 'tracking_on' ? C.green : n.type === 'tracking_off' ? C.destroy : C.amber },
+                  !n.is_read && styles.notifUnread]}>
+                  <Text style={styles.notifMsg}>{n.message}</Text>
+                  <Text style={styles.notifTime}>{formatDateFull(n.created_at)}  ·  {timeAgo(n.created_at)}</Text>
+                </View>
+              ))}
+              {notifications.length > 6 && (
+                <Text style={styles.moreNotifs}>+ {notifications.length - 6} older notifications</Text>
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Add Salesman Modal ── */}
+      <Modal visible={addModal} animationType="slide" transparent>
+        <View style={styles.overlay}>
+          <View style={styles.sheet}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>Add Salesman</Text>
+            <Text style={styles.label}>Full Name <Text style={styles.req}>*</Text></Text>
+            <TextInput style={styles.input} placeholder="Full name" placeholderTextColor={C.t3} value={newName} onChangeText={setNewName} />
+            <Text style={styles.label}>Email <Text style={styles.req}>*</Text></Text>
+            <TextInput style={styles.input} placeholder="email@alsahal.com" placeholderTextColor={C.t3} value={newEmail} onChangeText={setNewEmail} keyboardType="email-address" autoCapitalize="none" />
+            <Text style={styles.label}>Password <Text style={styles.req}>*</Text></Text>
+            <TextInput style={styles.input} placeholder="••••••••" placeholderTextColor={C.t3} value={newPassword} onChangeText={setNewPassword} secureTextEntry />
+            <View style={styles.infoBox}>
+              <Text style={styles.infoTxt}>Only admin can create salesman accounts. Salesmen cannot sign up themselves.</Text>
+            </View>
+            <TouchableOpacity style={styles.submitBtn} onPress={handleAddSalesman} disabled={addLoading}>
+              {addLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitTxt}>Create Account</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.cancelBtn} onPress={() => setAddModal(false)}>
+              <Text style={styles.cancelTxt}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+{/* ── Salesman Detail Modal ── */}
+      <Modal visible={detailModal} animationType="slide" transparent>
+        <View style={styles.overlay}>
+          <View style={[styles.sheet, { maxHeight: '92%' }]}>
+            <View style={styles.sheetHandle} />
+            {selectedSalesman && (() => {
+              const col = COLORS[salesmen.findIndex(s => s.id === selectedSalesman.id) % COLORS.length] || '#8E44AD';
+              const tr = getTracking(selectedSalesman.id);
+              const loc = getLocation(selectedSalesman.id);
+              const isOn = tr?.is_tracking;
+              const uniqueCompanies = [...new Set(salesmanVisits.map(v => v.company_name))].length;
+              return (
+                <>
+                  {/* Header */}
+                  <View style={styles.detailHeader}>
+                    <View style={[styles.av, { backgroundColor: col, width: 48, height: 48, borderRadius: 24 }]}>
+                      <Text style={[styles.avTxt, { fontSize: 18 }]}>{initials(selectedSalesman.name)}</Text>
+                    </View>
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <Text style={styles.detailName}>{selectedSalesman.name}</Text>
+                      <Text style={{ fontSize: 11, color: C.t2, marginTop: 1 }}>{selectedSalesman.email}</Text>
+                      <View style={styles.trackRow}>
+                        <View style={[styles.trackDot, { backgroundColor: isOn ? C.green : C.destroy }]} />
+                        <Text style={[styles.trackTxt, { color: isOn ? C.green : C.destroy }]}>
+                          {isOn ? 'Active' : 'Inactive'}
+                        </Text>
+                      </View>
+                    </View>
+                    <TouchableOpacity onPress={() => { setDetailModal(false); setCredentials(null); }}>
+                      <Text style={styles.closeBtn}>✕</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Credentials box */}
+                  <TouchableOpacity
+                    style={styles.credBtn}
+                    onPress={() => handleViewCredentials(selectedSalesman)}>
+                    <Text style={styles.credBtnTxt}>
+                      {credLoading ? 'Loading…' : credentials ? `📧 ${credentials.email}   🔑 ${credentials.password_plain || '(not stored)'}` : '👁 View Login Credentials'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  {/* Stats */}
+                  <View style={[styles.statsRow, { backgroundColor: 'transparent', borderBottomWidth: 0, padding: 0, paddingBottom: 8 }]}>
+                    <View style={styles.statCard}>
+                      <Text style={[styles.statVal, { color: C.navy, fontSize: 20 }]}>{salesmanVisits.length}</Text>
+                      <Text style={styles.statLbl}>Visits</Text>
+                    </View>
+                    <View style={styles.statCard}>
+                      <Text style={[styles.statVal, { color: C.green, fontSize: 20 }]}>{uniqueCompanies}</Text>
+                      <Text style={styles.statLbl}>Companies</Text>
+                    </View>
+                    <View style={styles.statCard}>
+                      <Text style={[styles.statVal, { color: C.red, fontSize: 20 }]}>{salesmanDeliveries.length}</Text>
+                      <Text style={styles.statLbl}>Deliveries</Text>
+                    </View>
+                  </View>
+
+                  {/* Live location button */}
+                  {isOn && (
+                    <TouchableOpacity
+                      style={styles.liveLocBtn}
+                      onPress={() => loc
+                        ? openMap(loc.lat, loc.lng, selectedSalesman.name)
+                        : Alert.alert('No location', 'No location data yet')}>
+                      <Text style={styles.liveLocTxt}>
+                        📍 Live Location {loc ? `· ${timeAgo(loc.recorded_at)}` : '· No data yet'}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+
+                  <FilterBar selected={detailFilter} onSelect={setDetailFilter} filters={DETAIL_FILTERS} />
+
+                  <ScrollView>
+                    {salesmanVisits.length === 0 && salesmanDeliveries.length === 0 &&
+                      <Text style={styles.empty}>No activity found</Text>}
+
+                    {salesmanVisits.map((v) => (
+                      <View key={v.id} style={[styles.card, styles.cardLeft, { borderLeftColor: col }]}>
+                        <View style={styles.cardTopRow}>
+                          <Text style={styles.cardTitle}>{v.company_name}</Text>
+                          <View style={[styles.badge, { backgroundColor: '#EAF0FB' }]}>
+                            <Text style={[styles.badgeTxt, { color: '#1A5276' }]}>Visit</Text>
+                          </View>
+                        </View>
+                        <Text style={styles.cardDetail}>{v.contact_name}  ·  {v.mobile}</Text>
+                        {v.email_id ? <Text style={styles.cardDetail}>{v.email_id}</Text> : null}
+                        {v.quotation && <Text style={styles.cardDetail}>Quotation: {v.quotation_description}</Text>}
+                        {v.lat && v.lng && (
+                          <TouchableOpacity style={styles.mapBtn}
+                            onPress={() => Linking.openURL(`https://www.google.com/maps?q=${v.lat},${v.lng}&label=${v.company_name}`)}>
+                            <Text style={styles.mapBtnTxt}>📍 View visit location</Text>
+                          </TouchableOpacity>
+                        )}
+                        <Text style={styles.cardTime}>{formatDate(v.visited_at)}</Text>
+                      </View>
+                    ))}
+
+                    {salesmanDeliveries.map((d) => (
+                      <View key={d.id} style={[styles.card, styles.cardLeft, { borderLeftColor: col }]}>
+                        <View style={styles.cardTopRow}>
+                          <Text style={styles.cardTitle}>{d.invoice_number}</Text>
+                          <View style={[styles.badge, { backgroundColor: C.greenL }]}>
+                            <Text style={[styles.badgeTxt, { color: '#145A32' }]}>Delivery</Text>
+                          </View>
+                        </View>
+                        <Text style={styles.cardDetail}>To: {d.delivered_person}  ·  {pmLabel(d.payment_method)}</Text>
+                        {d.lat && d.lng && (
+                          <TouchableOpacity style={styles.mapBtn}
+                            onPress={() => Linking.openURL(`https://www.google.com/maps?q=${d.lat},${d.lng}&label=${d.invoice_number}`)}>
+                            <Text style={styles.mapBtnTxt}>📍 View delivery location</Text>
+                          </TouchableOpacity>
+                        )}
+                        <Text style={styles.cardTime}>{formatDate(d.created_at)}</Text>
+                      </View>
+                    ))}
+                    <View style={{ height: 20 }} />
+                  </ScrollView>
+
+                  <TouchableOpacity
+                    style={[styles.submitBtn, { backgroundColor: C.destroy, marginTop: 8 }]}
+                    onPress={() => handleDeleteSalesman(selectedSalesman)}>
+                    <Text style={styles.submitTxt}>Delete Salesman Account</Text>
+                  </TouchableOpacity>
+                </>
+              );
+            })()}
+          </View>
+        </View>
+      </Modal>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: C.bg },
+  header: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: C.white,
+    paddingTop: Platform.OS === 'ios' ? 58 : 42,
+    paddingBottom: 18, paddingHorizontal: 16,
+    borderBottomWidth: 1, borderBottomColor: '#EBEBEB',
+  },
+  title: { fontSize: 20, fontWeight: '800', color: C.t1 },
+  subtitle: { fontSize: 12, color: C.t2, marginTop: 2 },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  notifWrap: { position: 'relative', padding: 4 },
+  notifIcon: { fontSize: 22 },
+  notifBadge: {
+    position: 'absolute', top: 0, right: 0,
+    backgroundColor: C.red, borderRadius: 8, minWidth: 16, height: 16,
+    alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: C.white,
+  },
+  notifBadgeTxt: { color: '#fff', fontSize: 9, fontWeight: '800' },
+  logoutBtn: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: '#DDD' },
+  logoutTxt: { fontSize: 12, fontWeight: '700', color: C.destroy },
+
+  statsRow: { flexDirection: 'row', gap: 8, padding: 14, paddingTop: 16, paddingBottom: 16, backgroundColor: C.white, borderBottomWidth: 1, borderBottomColor: '#EBEBEB' },
+  statCard: {
+    flex: 1, backgroundColor: C.bg, borderRadius: 12, padding: 12,
+    alignItems: 'center', borderTopWidth: 3,
+  },
+  statVal: { fontSize: 22, fontWeight: '800' },
+  statLbl: { fontSize: 9, fontWeight: '700', color: C.t2, marginTop: 3, textTransform: 'uppercase', letterSpacing: 0.5 },
+
+  navScroll: { backgroundColor: C.white, borderBottomWidth: 1, borderBottomColor: '#EBEBEB', flexGrow: 0 },
+  navTab: { paddingVertical: 12, paddingHorizontal: 16, borderBottomWidth: 2.5, borderBottomColor: 'transparent' },
+  navTabOn: { borderBottomColor: C.red },
+  navTabTxt: { fontSize: 12, fontWeight: '700', color: C.t2 },
+  navTabTxtOn: { color: C.red },
+
+  filterScroll: { paddingHorizontal: 14, paddingVertical: 10, flexGrow: 0 },
+  filterPill: {
+    paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20,
+    backgroundColor: C.white, marginRight: 8, borderWidth: 1, borderColor: '#DDD',
+  },
+  filterPillOn: { backgroundColor: C.red, borderColor: C.red },
+  filterPillTxt: { fontSize: 12, fontWeight: '600', color: C.t2 },
+  filterPillTxtOn: { color: '#fff' },
+
+  searchWrap: { paddingHorizontal: 14, paddingBottom: 6 },
+  searchBar: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: C.white, borderRadius: 12, paddingHorizontal: 12,
+    height: 42, borderWidth: 1, borderColor: '#E8EAED',
+  },
+  searchIcon: { fontSize: 14 },
+  searchInput: { flex: 1, fontSize: 13, color: C.t1 },
+
+  scroll: { flex: 1, paddingHorizontal: 14 },
+  resultCount: { fontSize: 11, color: C.t2, marginBottom: 8, marginTop: 2 },
+
+addSalesBtn: {
+    backgroundColor: C.red, height: 48, borderRadius: 14,
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: 14, marginTop: 60,
+  },
+  addSalesTxt: { color: '#fff', fontWeight: '800', fontSize: 14 },
+
+  salesGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  salesCard: {
+    width: '47.5%', backgroundColor: C.white, borderRadius: 14, padding: 14,
+    borderLeftWidth: 4, ...shadow,
+  },
+  salesCardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+  av: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  avTxt: { color: '#fff', fontWeight: '800', fontSize: 13 },
+  trackDotWrap: { width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  trackDot: { width: 8, height: 8, borderRadius: 4 },
+  salesName: { fontSize: 13, fontWeight: '700', color: C.t1 },
+  salesSub: { fontSize: 11, color: C.t2, marginTop: 2 },
+  locLink: { fontSize: 11, color: C.red, marginTop: 6, fontWeight: '600' },
+
+  card: { backgroundColor: C.white, borderRadius: 16, padding: 14, marginBottom: 10, ...shadow },
+  cardLeft: { borderLeftWidth: 4, paddingLeft: 14 },
+  cardTopRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 4 },
+  cardTitle: { fontSize: 14, fontWeight: '700', color: C.t1, flex: 1 },
+  cardDetail: { fontSize: 12, color: C.t2, marginTop: 2, lineHeight: 18 },
+  cardTime: { fontSize: 10, color: C.t3, marginTop: 8 },
+
+  salesBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20, marginLeft: 8 },
+  salesBadgeTxt: { fontSize: 10, fontWeight: '800' },
+  badge: { alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 },
+  badgeTxt: { fontSize: 11, fontWeight: '700' },
+
+  approveBtn: {
+    marginTop: 10, backgroundColor: C.green, padding: 10,
+    borderRadius: 10, alignItems: 'center',
+  },
+  approveTxt: { color: '#fff', fontWeight: '800', fontSize: 13 },
+
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.42)', justifyContent: 'flex-end' },
+  sheet: {
+    backgroundColor: C.white, borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    padding: 20, paddingBottom: Platform.OS === 'ios' ? 36 : 24,
+  },
+  sheetHandle: { width: 38, height: 4, backgroundColor: '#DDD', borderRadius: 2, alignSelf: 'center', marginBottom: 14 },
+  sheetTitle: { fontSize: 18, fontWeight: '800', color: C.red, marginBottom: 16 },
+  notifHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
+  closeBtn: { fontSize: 18, color: C.t2, fontWeight: '700', padding: 4 },
+
+  notifItem: {
+    padding: 12, borderRadius: 12, marginBottom: 8,
+    backgroundColor: '#F9F9F9', borderLeftWidth: 3,
+  },
+  notifUnread: { backgroundColor: '#FFF5F5' },
+  notifMsg: { fontSize: 13, fontWeight: '600', color: C.t1 },
+  notifTime: { fontSize: 10, color: C.t3, marginTop: 4 },
+  moreNotifs: { textAlign: 'center', color: C.t2, fontSize: 12, marginTop: 8, fontWeight: '600' },
+
+  label: { fontSize: 12, fontWeight: '700', color: C.t2, marginBottom: 6, marginTop: 8 },
+  req: { color: C.red },
+  input: {
+    height: 46, backgroundColor: '#F4F5F7', borderRadius: 12,
+    paddingHorizontal: 14, fontSize: 14, color: C.t1,
+    borderWidth: 1, borderColor: '#E8EAED',
+  },
+  infoBox: { backgroundColor: '#FFF8E1', borderRadius: 10, padding: 10, marginTop: 10 },
+  infoTxt: { fontSize: 12, color: '#7D6608', lineHeight: 18 },
+  submitBtn: { height: 50, backgroundColor: C.red, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginTop: 14 },
+  submitTxt: { color: '#fff', fontSize: 15, fontWeight: '800' },
+  cancelBtn: { alignItems: 'center', marginTop: 12, paddingBottom: 4 },
+  cancelTxt: { color: C.t2, fontSize: 14, fontWeight: '600' },
+
+  detailHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
+  detailName: { fontSize: 16, fontWeight: '800', color: C.t1 },
+  trackRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 3 },
+  trackTxt: { fontSize: 11, fontWeight: '700' },
+  locRow: { backgroundColor: '#F0FBF5', borderRadius: 10, padding: 10, marginBottom: 8 },
+  locTxt: { fontSize: 12, color: C.green, fontWeight: '600' },
+
+  empty: { textAlign: 'center', color: C.t3, marginTop: 40, fontSize: 14 },
+
+credBtn: {
+    backgroundColor: '#EAF0FB', borderRadius: 10, padding: 11,
+    alignItems: 'center', marginBottom: 10,
+    borderWidth: 1, borderColor: '#D0E4F7',
+  },
+  credBtnTxt: { fontSize: 12, fontWeight: '700', color: C.navy },
+  liveLocBtn: {
+    backgroundColor: C.greenL, borderRadius: 10, padding: 10,
+    alignItems: 'center', marginBottom: 8,
+    borderWidth: 1, borderColor: '#A9DFBF',
+  },
+  liveLocTxt: { fontSize: 12, fontWeight: '700', color: '#145A32' },
+  mapBtn: {
+    backgroundColor: '#F4F5F7', borderRadius: 8,
+    paddingVertical: 7, paddingHorizontal: 12,
+    alignSelf: 'flex-start', marginTop: 8,
+    borderWidth: 1, borderColor: '#DDD',
+  },
+  mapBtnTxt: { fontSize: 11, fontWeight: '700', color: C.red },
+
+});
