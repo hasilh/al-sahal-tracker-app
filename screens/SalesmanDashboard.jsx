@@ -9,7 +9,9 @@ import * as Location from 'expo-location';
 import { startTracking, stopTracking, isTracking } from '../services/location';
 import {
   logVisit, getVisits, logDelivery, getDeliveries,
-  getNotPaidInvoices, requestPayment, removeToken
+  getNotPaidInvoices, requestPayment, removeToken,
+  logSale, getSalesLog, getNotPaidSales, requestSalePayment,
+  getSalesTarget
 } from '../services/api';
 
 let Notifications = null;
@@ -84,11 +86,16 @@ export default function SalesmanDashboard({ route, navigation }) {
   const [visits, setVisits] = useState([]);
   const [deliveries, setDeliveries] = useState([]);
   const [notPaid, setNotPaid] = useState([]);
+  const [salesLog, setSalesLog] = useState([]);
+  const [notPaidSales, setNotPaidSales] = useState([]);
+  const [salesTarget, setSalesTarget] = useState({ target_amount: 0, achieved_amount: 0 });
   const [visitFilter, setVisitFilter] = useState('today');
   const [deliveryFilter, setDeliveryFilter] = useState('today');
+  const [salesLogFilter, setSalesLogFilter] = useState('today');
   const [visitSearch, setVisitSearch] = useState('');
   const [deliverySearch, setDeliverySearch] = useState('');
   const [notPaidSearch, setNotPaidSearch] = useState('');
+  const [salesLogSearch, setSalesLogSearch] = useState('');
 
   // Visit modal
   const [visitModal, setVisitModal] = useState(false);
@@ -104,11 +111,22 @@ export default function SalesmanDashboard({ route, navigation }) {
   const [deliveryModal, setDeliveryModal] = useState(false);
   const [invoiceNo, setInvoiceNo] = useState('');
   const [deliveredPerson, setDeliveredPerson] = useState('');
+  const [deliveryAmount, setDeliveryAmount] = useState('');
+  const [isMySale, setIsMySale] = useState(false);
   const [payType, setPayType] = useState('cash');
   const [cashType, setCashType] = useState('cash');
   const [dLoading, setDLoading] = useState(false);
 
-  // Payment modal
+  // Sale modal
+  const [saleModal, setSaleModal] = useState(false);
+  const [saleInvoiceNo, setSaleInvoiceNo] = useState('');
+  const [saleDeliveredTo, setSaleDeliveredTo] = useState('');
+  const [saleAmount, setSaleAmount] = useState('');
+  const [salePayType, setSalePayType] = useState('cash');
+  const [saleCashType, setSaleCashType] = useState('cash');
+  const [sLoading, setSLoading] = useState(false);
+
+  // Payment modal (shared by delivery + sale not-paid entries)
   const [payModal, setPayModal] = useState(false);
   const [selectedInv, setSelectedInv] = useState(null);
   const [newPayType, setNewPayType] = useState('cash');
@@ -119,6 +137,7 @@ export default function SalesmanDashboard({ route, navigation }) {
 
   useEffect(() => { loadVisits(); }, [visitFilter]);
   useEffect(() => { loadDeliveries(); }, [deliveryFilter]);
+  useEffect(() => { loadSalesLog(); }, [salesLogFilter]);
 
   useEffect(() => {
   checkTracking();
@@ -190,7 +209,7 @@ if (day !== 5 && h === 9 && m % 15 === 0 && !active && !dismissedTodayRef.curren
   };
 
   const loadAll = async () => {
-    await Promise.all([loadVisits(), loadDeliveries(), loadNotPaid()]);
+    await Promise.all([loadVisits(), loadDeliveries(), loadSalesLog(), loadNotPaid(), loadSalesTarget()]);
   };
 
   const onRefresh = async () => {
@@ -213,10 +232,25 @@ if (day !== 5 && h === 9 && m % 15 === 0 && !active && !dismissedTodayRef.curren
     } catch (e) { console.log('loadDeliveries error:', e?.response?.data || e.message); }
   };
 
+  const loadSalesLog = async () => {
+    try {
+      const data = await getSalesLog(salesLogFilter);
+      setSalesLog(data);
+    } catch (e) { console.log('loadSalesLog error:', e?.response?.data || e.message); }
+  };
+
+  const loadSalesTarget = async () => {
+    try {
+      const data = await getSalesTarget();
+      setSalesTarget(data);
+    } catch (e) { console.log('loadSalesTarget error:', e?.response?.data || e.message); }
+  };
+
   const loadNotPaid = async () => {
     try {
-      const data = await getNotPaidInvoices();
-      setNotPaid(data);
+      const [deliv, sales] = await Promise.all([getNotPaidInvoices(), getNotPaidSales()]);
+      setNotPaid(deliv);
+      setNotPaidSales(sales);
     } catch (e) { console.log('loadNotPaid error:', e?.response?.data || e.message); }
   };
 
@@ -303,14 +337,18 @@ const handleLogDelivery = async () => {
         invoice_number: invoiceNo.trim(),
         delivered_person: deliveredPerson.trim(),
         payment_method: pm,
+        amount: Number(deliveryAmount) || 0,
+        is_sale: isMySale,
         lat,
         lng
       });
       setDeliveryModal(false);
-      setInvoiceNo(''); setDeliveredPerson('');
+      setInvoiceNo(''); setDeliveredPerson(''); setDeliveryAmount(''); setIsMySale(false);
       setPayType('cash'); setCashType('cash');
       await loadDeliveries();
       await loadNotPaid();
+      if (isMySale) await loadSalesLog();
+      if (pm !== 'not_paid') await loadSalesTarget();
       Alert.alert('Saved', 'Delivery logged successfully.');
     } catch (e) {
       console.log('logDelivery error:', e?.response?.data || e.message);
@@ -318,16 +356,51 @@ const handleLogDelivery = async () => {
     } finally { setDLoading(false); }
   };
 
+  // ── Sale log ───────────────────────────────────────────────────
+  const handleLogSale = async () => {
+    if (!saleInvoiceNo.trim() || !saleDeliveredTo.trim())
+      return Alert.alert('Required', 'Invoice number and delivered to are required.');
+    const pm = resolvedPaymentMethod(salePayType, saleCashType);
+    setSLoading(true);
+    try {
+      await logSale({
+        invoice_number: saleInvoiceNo.trim(),
+        delivered_to: saleDeliveredTo.trim(),
+        amount: Number(saleAmount) || 0,
+        payment_method: pm
+      });
+      setSaleModal(false);
+      setSaleInvoiceNo(''); setSaleDeliveredTo(''); setSaleAmount('');
+      setSalePayType('cash'); setSaleCashType('cash');
+      await loadSalesLog();
+      await loadNotPaid();
+      if (pm !== 'not_paid') await loadSalesTarget();
+      Alert.alert('Saved', 'Sale logged successfully.');
+    } catch (e) {
+      console.log('logSale error:', e?.response?.data || e.message);
+      Alert.alert('Error', e?.response?.data?.error || 'Failed to save sale');
+    } finally { setSLoading(false); }
+  };
+
   // ── Payment request ────────────────────────────────────────────
   const handleRequestPayment = async () => {
     const pm = resolvedPaymentMethod(newPayType, newCashType);
     try {
-      await requestPayment(selectedInv.id, pm);
-      setNotPaid(prev => prev.map(inv =>
-        inv.id === selectedInv.id
-          ? { ...inv, status: 'pending_approval', payment_method: pm }
-          : inv
-      ));
+      if (selectedInv._source === 'sales') {
+        await requestSalePayment(selectedInv.id, pm);
+        setNotPaidSales(prev => prev.map(inv =>
+          inv.id === selectedInv.id
+            ? { ...inv, status: 'pending_approval', payment_method: pm }
+            : inv
+        ));
+      } else {
+        await requestPayment(selectedInv.id, pm);
+        setNotPaid(prev => prev.map(inv =>
+          inv.id === selectedInv.id
+            ? { ...inv, status: 'pending_approval', payment_method: pm }
+            : inv
+        ));
+      }
       setPayModal(false);
     } catch (e) { Alert.alert('Error', 'Failed to submit payment request'); }
   };
@@ -354,7 +427,12 @@ const handleLogDelivery = async () => {
 
   const filteredVisits = searchFilter(visits, visitSearch, ['company_name','contact_name','mobile','email_id']);
   const filteredDeliveries = searchFilter(deliveries, deliverySearch, ['invoice_number','delivered_person','payment_method']);
-  const filteredNotPaid = searchFilter(notPaid, notPaidSearch, ['invoice_number','delivered_person']);
+  const filteredSalesLog = searchFilter(salesLog, salesLogSearch, ['invoice_number','delivered_to','payment_method']);
+  const mergedNotPaid = [
+    ...notPaid.map(i => ({ ...i, _source: 'delivery', _to: i.delivered_person })),
+    ...notPaidSales.map(i => ({ ...i, _source: 'sales', _to: i.delivered_to })),
+  ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  const filteredNotPaid = searchFilter(mergedNotPaid, notPaidSearch, ['invoice_number','_to']);
 
   // ── Sub-components ─────────────────────────────────────────────
   const PayTypeSelector = ({ type, setType, cashT, setCashT }) => (
@@ -435,6 +513,22 @@ const handleLogDelivery = async () => {
         </Text>
       </View>
 
+      {/* Sales Target */}
+      <View style={styles.card}>
+        <Text style={styles.sectionLabel}>SALES TARGET · THIS MONTH</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 6, marginTop: 2 }}>
+          <Text style={styles.targetAchieved}>{Number(salesTarget.achieved_amount || 0).toFixed(0)}</Text>
+          <Text style={styles.targetSlash}>/ {Number(salesTarget.target_amount || 0).toFixed(0)} OMR</Text>
+        </View>
+        <View style={styles.targetBarBg}>
+          <View style={[styles.targetBarFill, {
+            width: `${salesTarget.target_amount > 0
+              ? Math.min(100, (salesTarget.achieved_amount / salesTarget.target_amount) * 100)
+              : 0}%`
+          }]} />
+        </View>
+      </View>
+
       {/* Stats */}
       <View style={styles.statsRow}>
         <View style={styles.statCard}>
@@ -443,7 +537,7 @@ const handleLogDelivery = async () => {
         </View>
         <View style={styles.statCard}>
           <Text style={[styles.statVal, { color: C.red }]}>
-            {notPaid.filter(i => i.status === 'not_paid').length}
+            {mergedNotPaid.filter(i => i.status === 'not_paid').length}
           </Text>
           <Text style={styles.statLbl}>Not Paid</Text>
         </View>
@@ -522,10 +616,18 @@ const handleLogDelivery = async () => {
         {filteredNotPaid.map((inv) => {
           const isPending = inv.status === 'pending_approval';
           return (
-            <View key={inv.id} style={[styles.card, styles.cardLeft,
+            <View key={`${inv._source}-${inv.id}`} style={[styles.card, styles.cardLeft,
               { borderLeftColor: isPending ? C.amber : C.red }]}>
-              <Text style={styles.cardTitle}>{inv.invoice_number}</Text>
-              <Text style={styles.cardDetail}>Delivered to: {inv.delivered_person}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Text style={styles.cardTitle}>{inv.invoice_number}</Text>
+                <View style={[styles.badge, { backgroundColor: inv._source === 'sales' ? '#EAF0FB' : '#F4ECFB' }]}>
+                  <Text style={[styles.badgeTxt, { color: inv._source === 'sales' ? '#1A5276' : '#5B2C6F' }]}>
+                    {inv._source === 'sales' ? 'Sale' : 'Delivery'}
+                  </Text>
+                </View>
+              </View>
+              <Text style={styles.cardDetail}>Delivered to: {inv._to}</Text>
+              {inv.amount ? <Text style={styles.cardDetail}>Amount: {Number(inv.amount).toFixed(2)} OMR</Text> : null}
               <Text style={styles.cardTime}>{formatDate(inv.created_at)}</Text>
               <View style={[styles.badge,
                 { backgroundColor: isPending ? C.amberL : C.redL, marginTop: 8 }]}>
@@ -552,6 +654,28 @@ const handleLogDelivery = async () => {
     </>
   );
 
+  const SalesLogTab = () => (
+    <>
+      <FilterBar selected={salesLogFilter} onSelect={setSalesLogFilter} />
+      <View style={{ paddingHorizontal: 14, paddingBottom: 6 }}>
+        <SearchBar value={salesLogSearch} onChange={setSalesLogSearch}
+          placeholder="Search invoice, recipient…" />
+      </View>
+      <ScrollView style={styles.scroll}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
+        <Text style={styles.resultCount}>{filteredSalesLog.length} sale{filteredSalesLog.length !== 1 ? 's' : ''}</Text>
+        {filteredSalesLog.map((s, i) => (
+          <SaleCard key={s.id} s={s} color={SALESMAN_COLORS[i % SALESMAN_COLORS.length]} />
+        ))}
+        {filteredSalesLog.length === 0 && <Text style={styles.empty}>No sales logged</Text>}
+        <View style={{ height: 80 }} />
+      </ScrollView>
+      <TouchableOpacity style={styles.fab} onPress={() => setSaleModal(true)}>
+        <Text style={styles.fabTxt}>+</Text>
+      </TouchableOpacity>
+    </>
+  );
+
   return (
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor={C.white} />
@@ -571,6 +695,7 @@ const handleLogDelivery = async () => {
         {activeTab === 'home' && <HomeTab />}
         {activeTab === 'visits' && <VisitsTab />}
         {activeTab === 'delivery' && <DeliveryTab />}
+        {activeTab === 'saleslog' && <SalesLogTab />}
         {activeTab === 'notpaid' && <NotPaidTab />}
       </View>
 
@@ -580,6 +705,7 @@ const handleLogDelivery = async () => {
           { key: 'home', label: 'Home', icon: '🏠' },
           { key: 'visits', label: 'Visits', icon: '📍' },
           { key: 'delivery', label: 'Delivery', icon: '🚚' },
+          { key: 'saleslog', label: 'Sales Log', icon: '💰' },
           { key: 'notpaid', label: 'Not Paid', icon: '🧾' },
         ].map(t => (
           <TouchableOpacity key={t.key} style={styles.tabItem} onPress={() => setActiveTab(t.key)}>
@@ -667,6 +793,17 @@ const handleLogDelivery = async () => {
                 placeholderTextColor={C.t3} value={deliveredPerson}
                 onChangeText={setDeliveredPerson} />
 
+              <Text style={styles.label}>Amount (OMR)</Text>
+              <TextInput style={styles.input} placeholder="0.00"
+                placeholderTextColor={C.t3} value={deliveryAmount}
+                onChangeText={setDeliveryAmount} keyboardType="decimal-pad" />
+
+              <View style={styles.switchRow}>
+                <Text style={styles.label}>My Sales — also log this as a sale?</Text>
+                <Switch value={isMySale} onValueChange={setIsMySale}
+                  trackColor={{ true: C.green, false: '#DDD' }} thumbColor="#fff" />
+              </View>
+
               <Text style={styles.label}>Payment Method <Text style={styles.req}>*</Text></Text>
               <PayTypeSelector type={payType} setType={setPayType}
                 cashT={cashType} setCashT={setCashType} />
@@ -681,6 +818,45 @@ const handleLogDelivery = async () => {
                   : <Text style={styles.submitTxt}>Save Delivery</Text>}
               </TouchableOpacity>
               <TouchableOpacity style={styles.cancelBtn} onPress={() => setDeliveryModal(false)}>
+                <Text style={styles.cancelTxt}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
+
+      {/* Sale Modal */}
+      <Modal visible={saleModal} animationType="slide" transparent>
+        <View style={styles.overlay}>
+          <ScrollView keyboardShouldPersistTaps="handled">
+            <View style={styles.sheet}>
+              <View style={styles.sheetHandle} />
+              <Text style={styles.sheetTitle}>New Sale Log</Text>
+
+              <Text style={styles.label}>Invoice Number <Text style={styles.req}>*</Text></Text>
+              <TextInput style={styles.input} placeholder="INV-2025-XXXX"
+                placeholderTextColor={C.t3} value={saleInvoiceNo} onChangeText={setSaleInvoiceNo} />
+
+              <Text style={styles.label}>Delivered To <Text style={styles.req}>*</Text></Text>
+              <TextInput style={styles.input} placeholder="Person / company name"
+                placeholderTextColor={C.t3} value={saleDeliveredTo} onChangeText={setSaleDeliveredTo} />
+
+              <Text style={styles.label}>Amount (OMR)</Text>
+              <TextInput style={styles.input} placeholder="0.00"
+                placeholderTextColor={C.t3} value={saleAmount}
+                onChangeText={setSaleAmount} keyboardType="decimal-pad" />
+
+              <Text style={styles.label}>Payment Method <Text style={styles.req}>*</Text></Text>
+              <PayTypeSelector type={salePayType} setType={setSalePayType}
+                cashT={saleCashType} setCashT={setSaleCashType} />
+
+              <TouchableOpacity style={[styles.submitBtn, { marginTop: 12 }]}
+                onPress={handleLogSale} disabled={sLoading}>
+                {sLoading
+                  ? <ActivityIndicator color="#fff" />
+                  : <Text style={styles.submitTxt}>Save Sale</Text>}
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.cancelBtn} onPress={() => setSaleModal(false)}>
                 <Text style={styles.cancelTxt}>Cancel</Text>
               </TouchableOpacity>
             </View>
@@ -773,6 +949,38 @@ function DeliveryCard({ d, color }) {
   );
 }
 
+function SaleCard({ s, color }) {
+  const sc = s.status === 'paid'
+    ? { bg: '#D5F5E3', txt: '#145A32', lbl: '✓ Paid' }
+    : s.status === 'pending_approval'
+    ? { bg: '#FDEBD0', txt: '#784212', lbl: '⏳ Pending approval' }
+    : { bg: '#FADBD8', txt: '#922B21', lbl: '✗ Not Paid' };
+  const pmLabel = s.payment_method === 'bank' ? 'Bank Transfer'
+    : s.payment_method === 'not_paid' ? 'Not Paid'
+    : s.payment_method
+      ? s.payment_method.charAt(0).toUpperCase() + s.payment_method.slice(1)
+      : '—';
+  return (
+    <View style={[styles.card, styles.cardLeft, { borderLeftColor: color }]}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <Text style={styles.cardTitle}>{s.invoice_number}</Text>
+        {s.source === 'delivery' && (
+          <View style={[styles.badge, { backgroundColor: '#F4ECFB' }]}>
+            <Text style={[styles.badgeTxt, { color: '#5B2C6F' }]}>From Delivery</Text>
+          </View>
+        )}
+      </View>
+      <Text style={styles.cardDetail}>Delivered to: {s.delivered_to}</Text>
+      <Text style={styles.cardDetail}>Amount: {Number(s.amount || 0).toFixed(2)} OMR</Text>
+      <Text style={styles.cardDetail}>Payment: {pmLabel}</Text>
+      <View style={[styles.badge, { backgroundColor: sc.bg, marginTop: 6 }]}>
+        <Text style={[styles.badgeTxt, { color: sc.txt }]}>{sc.lbl}</Text>
+      </View>
+      <Text style={styles.cardTime}>{formatDate(s.created_at)}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: C.bg },
   header: {
@@ -800,6 +1008,11 @@ const styles = StyleSheet.create({
   trackDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: 'rgba(255,255,255,0.7)' },
   trackPillTxt: { fontSize: 15, fontWeight: '800', color: '#fff' },
   trackHint: { fontSize: 11, marginTop: 10, fontWeight: '600' },
+
+  targetAchieved: { fontSize: 22, fontWeight: '800', color: C.navy },
+  targetSlash: { fontSize: 13, fontWeight: '600', color: C.t2, marginBottom: 2 },
+  targetBarBg: { height: 8, backgroundColor: '#E8EAED', borderRadius: 4, marginTop: 10, overflow: 'hidden' },
+  targetBarFill: { height: 8, backgroundColor: C.green, borderRadius: 4 },
 
   statsRow: { flexDirection: 'row', gap: 8, marginBottom: 14 },
   statCard: {

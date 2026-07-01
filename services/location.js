@@ -30,9 +30,9 @@ export const startTracking = async () => {
     distanceInterval: 50,
     showsBackgroundLocationIndicator: true,
     foregroundService: {
-      notificationTitle: 'Al Sahal Tracker',
-      notificationBody: 'Your location is being tracked',
-      notificationColor: '#1a73e8',
+      notificationTitle: 'Al Sahal · Work Started',
+      notificationBody: 'Your work day is currently active',
+      notificationColor: '#C0392B',
     },
   });
 

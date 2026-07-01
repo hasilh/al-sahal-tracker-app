@@ -171,3 +171,97 @@ export const getSalesmanCredentials = async (id) => {
   });
   return res.data;
 };
+
+// Work session history (admin) — point 3
+export const getWorkSessions = async (user_id, filter) => {
+  const token = await getToken();
+  const params = { user_id };
+  if (filter) params.filter = filter;
+  const res = await axios.get(`${BASE_URL}/api/tracking/sessions`, {
+    headers: { Authorization: `Bearer ${token}` }, params
+  });
+  return res.data;
+};
+
+export const getSessionRoute = async (sessionId) => {
+  const token = await getToken();
+  const res = await axios.get(`${BASE_URL}/api/tracking/route/${sessionId}`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  return res.data;
+};
+
+// Salesman summary — point 4 (admin view of today + total counts)
+export const getSalesmanSummary = async (id) => {
+  const token = await getToken();
+  const res = await axios.get(`${BASE_URL}/api/admin/salesmen/${id}/summary`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  return res.data;
+};
+
+// Sales targets — point 5
+export const setSalesTarget = async (user_id, month, target_amount) => {
+  const token = await getToken();
+  const res = await axios.post(`${BASE_URL}/api/admin/sales-target`,
+    { user_id, month, target_amount },
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  return res.data;
+};
+
+export const getSalesTarget = async (user_id, month) => {
+  const token = await getToken();
+  const params = {};
+  if (user_id) params.user_id = user_id;
+  if (month) params.month = month;
+  const res = await axios.get(`${BASE_URL}/api/admin/sales-target`, {
+    headers: { Authorization: `Bearer ${token}` }, params
+  });
+  return res.data;
+};
+
+// Sales log — point 6
+export const logSale = async (saleData) => {
+  const token = await getToken();
+  const res = await axios.post(`${BASE_URL}/api/sales`, saleData, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  return res.data;
+};
+
+export const getSalesLog = async (filter, user_id) => {
+  const token = await getToken();
+  const params = {};
+  if (filter) params.filter = filter;
+  if (user_id) params.user_id = user_id;
+  const res = await axios.get(`${BASE_URL}/api/sales`, {
+    headers: { Authorization: `Bearer ${token}` }, params
+  });
+  return res.data;
+};
+
+export const getNotPaidSales = async () => {
+  const token = await getToken();
+  const res = await axios.get(`${BASE_URL}/api/sales/not-paid`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  return res.data;
+};
+
+export const requestSalePayment = async (id, payment_method) => {
+  const token = await getToken();
+  const res = await axios.patch(`${BASE_URL}/api/sales/request-payment/${id}`,
+    { payment_method },
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  return res.data;
+};
+
+export const approveSalePayment = async (id) => {
+  const token = await getToken();
+  const res = await axios.patch(`${BASE_URL}/api/sales/approve/${id}`, {}, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  return res.data;
+};
