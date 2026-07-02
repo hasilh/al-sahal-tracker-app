@@ -1,7 +1,7 @@
 import axios from 'axios';
 import * as SecureStore from 'expo-secure-store';
 
-const BASE_URL = 'http://192.168.100.60:5000';
+const BASE_URL = 'https://al-sahal-tracker-backend.onrender.com';
 
 export const getToken = async () => await SecureStore.getItemAsync('token');
 export const saveToken = async (token) => await SecureStore.setItemAsync('token', token);
