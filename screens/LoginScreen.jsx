@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
   StyleSheet, Alert, ActivityIndicator, KeyboardAvoidingView,
-  Platform, StatusBar
+  Platform, StatusBar, Image
 } from 'react-native';
 import { signin, saveToken } from '../services/api';
 
@@ -38,9 +38,7 @@ export default function LoginScreen({ navigation }) {
       <View style={styles.inner}>
         {/* Logo */}
         <View style={styles.logoWrap}>
-          <View style={styles.logoBox}>
-            <Text style={styles.logoText}>AS</Text>
-          </View>
+          <Image source={require('../assets/icon.png')} style={styles.logoImg} />
           <Text style={styles.brandName}>Al Sahal</Text>
           <Text style={styles.brandTag}>Al Sahal Printing Press · Sales Tracker</Text>
         </View>
@@ -100,12 +98,10 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: C.bg },
   inner: { flex: 1, justifyContent: 'center', padding: 24 },
   logoWrap: { alignItems: 'center', marginBottom: 32 },
-  logoBox: {
+  logoImg: {
     width: 72, height: 72, borderRadius: 20,
-    backgroundColor: C.red,
-    alignItems: 'center', justifyContent: 'center', marginBottom: 12,
+    marginBottom: 12,
   },
-  logoText: { color: '#fff', fontSize: 26, fontWeight: '900' },
   brandName: { fontSize: 26, fontWeight: '900', color: C.red, letterSpacing: 0.5 },
   brandTag: { fontSize: 12, color: C.t2, marginTop: 4, letterSpacing: 0.2 },
   card: {
