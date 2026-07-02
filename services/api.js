@@ -172,25 +172,6 @@ export const getSalesmanCredentials = async (id) => {
   return res.data;
 };
 
-// Work session history (admin) — point 3
-export const getWorkSessions = async (user_id, filter) => {
-  const token = await getToken();
-  const params = { user_id };
-  if (filter) params.filter = filter;
-  const res = await axios.get(`${BASE_URL}/api/tracking/sessions`, {
-    headers: { Authorization: `Bearer ${token}` }, params
-  });
-  return res.data;
-};
-
-export const getSessionRoute = async (sessionId) => {
-  const token = await getToken();
-  const res = await axios.get(`${BASE_URL}/api/tracking/route/${sessionId}`, {
-    headers: { Authorization: `Bearer ${token}` }
-  });
-  return res.data;
-};
-
 // Salesman summary — point 4 (admin view of today + total counts)
 export const getSalesmanSummary = async (id) => {
   const token = await getToken();

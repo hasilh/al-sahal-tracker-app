@@ -10,10 +10,9 @@ import {
   approvePayment, getNotifications, markNotificationsRead,
   createSalesman, getSalesmen, deleteSalesman, removeToken,
   getSalesmanCredentials, getSalesmanSummary, getSalesTarget,
-  setSalesTarget, getWorkSessions, getSessionRoute,
+  setSalesTarget,
   getSalesLog, getNotPaidSales, approveSalePayment
 } from '../services/api';
-import MapView, { Marker, Polyline } from 'react-native-maps';
 
 const C = {
   red: '#C0392B', redD: '#A93226', redL: '#FADBD8',
@@ -87,14 +86,6 @@ const DETAIL_FILTERS = [
   { key: 'all', label: 'All Time' },
 ];
 
-const HISTORY_FILTERS = [
-  { key: 'today', label: 'Today' },
-  { key: 'yesterday', label: 'Yesterday' },
-  { key: 'week', label: 'This Week' },
-  { key: 'older', label: 'Previous' },
-  { key: 'all', label: 'All' },
-];
-
 export default function AdminDashboard({ navigation }) {
   const [tab, setTab] = useState('salesmen');
   const [salesmen, setSalesmen] = useState([]);
@@ -129,21 +120,12 @@ export default function AdminDashboard({ navigation }) {
   const [salesmanVisits, setSalesmanVisits] = useState([]);
   const [salesmanDeliveries, setSalesmanDeliveries] = useState([]);
   const [detailFilter, setDetailFilter] = useState('today');
-  const [detailSection, setDetailSection] = useState('activity'); // 'activity' | 'history'
 
   // Summary + target for the selected salesman
   const [salesmanSummary, setSalesmanSummary] = useState(null);
   const [salesmanTarget, setSalesmanTarget] = useState({ target_amount: 0, achieved_amount: 0 });
   const [targetInput, setTargetInput] = useState('');
   const [targetSaving, setTargetSaving] = useState(false);
-
-  // History (work sessions + route)
-  const [historyFilter, setHistoryFilter] = useState('today'); // today | yesterday | week | older | all
-  const [sessions, setSessions] = useState([]);
-  const [routeModal, setRouteModal] = useState(false);
-  const [routePoints, setRoutePoints] = useState([]);
-  const [routeSession, setRouteSession] = useState(null);
-  const [routeLoading, setRouteLoading] = useState(false);
 
   // Add form
   const [newName, setNewName] = useState('');
@@ -171,9 +153,6 @@ export default function AdminDashboard({ navigation }) {
       loadSalesmanTarget();
     }
   }, [detailFilter, selectedSalesman?.id]);
-  useEffect(() => {
-    if (selectedSalesman?.id && detailSection === 'history') loadSessions();
-  }, [historyFilter, detailSection, selectedSalesman?.id]);
 
 const loadAll = async () => {
     try {
@@ -254,26 +233,6 @@ const loadAll = async () => {
     } catch (e) {
       Alert.alert('Error', 'Failed to save target');
     } finally { setTargetSaving(false); }
-  };
-
-  // Point 3 — work session history (Today / Yesterday / This Week / Previous)
-  const loadSessions = async () => {
-    if (!selectedSalesman) return;
-    try {
-      setSessions(await getWorkSessions(selectedSalesman.id, historyFilter));
-    } catch (e) { console.log('loadSessions error:', e?.response?.data || e.message); }
-  };
-
-  const openSessionRoute = async (session) => {
-    setRouteSession(session);
-    setRouteModal(true);
-    setRouteLoading(true);
-    try {
-      const { points } = await getSessionRoute(session.id);
-      setRoutePoints(points || []);
-    } catch (e) {
-      Alert.alert('Error', 'Could not load route for this session');
-    } finally { setRouteLoading(false); }
   };
 
   const onRefresh = async () => {
@@ -964,99 +923,53 @@ const handleAddSalesman = async () => {
                     </TouchableOpacity>
                   )}
 
-                  {/* Activity / History toggle — point 3 */}
-                  <View style={styles.sectionToggle}>
-                    {[['activity','Activity'],['history','Route History']].map(([key,label]) => (
-                      <TouchableOpacity key={key}
-                        style={[styles.sectionToggleBtn, detailSection===key && styles.sectionToggleBtnOn]}
-                        onPress={() => setDetailSection(key)}>
-                        <Text style={[styles.sectionToggleTxt, detailSection===key && styles.sectionToggleTxtOn]}>{label}</Text>
-                      </TouchableOpacity>
+                  <FilterBar selected={detailFilter} onSelect={setDetailFilter} filters={DETAIL_FILTERS} />
+
+                  <ScrollView>
+                    {salesmanVisits.length === 0 && salesmanDeliveries.length === 0 &&
+                      <Text style={styles.empty}>No activity found</Text>}
+
+                    {salesmanVisits.map((v) => (
+                      <View key={v.id} style={[styles.card, styles.cardLeft, { borderLeftColor: col }]}>
+                        <View style={styles.cardTopRow}>
+                          <Text style={styles.cardTitle}>{v.company_name}</Text>
+                          <View style={[styles.badge, { backgroundColor: '#EAF0FB' }]}>
+                            <Text style={[styles.badgeTxt, { color: '#1A5276' }]}>Visit</Text>
+                          </View>
+                        </View>
+                        <Text style={styles.cardDetail}>{v.contact_name}  ·  {v.mobile}</Text>
+                        {v.email_id ? <Text style={styles.cardDetail}>{v.email_id}</Text> : null}
+                        {v.quotation && <Text style={styles.cardDetail}>Quotation: {v.quotation_description}</Text>}
+                        {v.lat && v.lng && (
+                          <TouchableOpacity style={styles.mapBtn}
+                            onPress={() => Linking.openURL(`https://www.google.com/maps?q=${v.lat},${v.lng}&label=${v.company_name}`)}>
+                            <Text style={styles.mapBtnTxt}>📍 View visit location</Text>
+                          </TouchableOpacity>
+                        )}
+                        <Text style={styles.cardTime}>{formatDate(v.visited_at)}</Text>
+                      </View>
                     ))}
-                  </View>
 
-                  {detailSection === 'activity' ? (
-                    <>
-                      <FilterBar selected={detailFilter} onSelect={setDetailFilter} filters={DETAIL_FILTERS} />
-
-                      <ScrollView>
-                        {salesmanVisits.length === 0 && salesmanDeliveries.length === 0 &&
-                          <Text style={styles.empty}>No activity found</Text>}
-
-                        {salesmanVisits.map((v) => (
-                          <View key={v.id} style={[styles.card, styles.cardLeft, { borderLeftColor: col }]}>
-                            <View style={styles.cardTopRow}>
-                              <Text style={styles.cardTitle}>{v.company_name}</Text>
-                              <View style={[styles.badge, { backgroundColor: '#EAF0FB' }]}>
-                                <Text style={[styles.badgeTxt, { color: '#1A5276' }]}>Visit</Text>
-                              </View>
-                            </View>
-                            <Text style={styles.cardDetail}>{v.contact_name}  ·  {v.mobile}</Text>
-                            {v.email_id ? <Text style={styles.cardDetail}>{v.email_id}</Text> : null}
-                            {v.quotation && <Text style={styles.cardDetail}>Quotation: {v.quotation_description}</Text>}
-                            {v.lat && v.lng && (
-                              <TouchableOpacity style={styles.mapBtn}
-                                onPress={() => Linking.openURL(`https://www.google.com/maps?q=${v.lat},${v.lng}&label=${v.company_name}`)}>
-                                <Text style={styles.mapBtnTxt}>📍 View visit location</Text>
-                              </TouchableOpacity>
-                            )}
-                            <Text style={styles.cardTime}>{formatDate(v.visited_at)}</Text>
+                    {salesmanDeliveries.map((d) => (
+                      <View key={d.id} style={[styles.card, styles.cardLeft, { borderLeftColor: col }]}>
+                        <View style={styles.cardTopRow}>
+                          <Text style={styles.cardTitle}>{d.invoice_number}</Text>
+                          <View style={[styles.badge, { backgroundColor: C.greenL }]}>
+                            <Text style={[styles.badgeTxt, { color: '#145A32' }]}>Delivery</Text>
                           </View>
-                        ))}
-
-                        {salesmanDeliveries.map((d) => (
-                          <View key={d.id} style={[styles.card, styles.cardLeft, { borderLeftColor: col }]}>
-                            <View style={styles.cardTopRow}>
-                              <Text style={styles.cardTitle}>{d.invoice_number}</Text>
-                              <View style={[styles.badge, { backgroundColor: C.greenL }]}>
-                                <Text style={[styles.badgeTxt, { color: '#145A32' }]}>Delivery</Text>
-                              </View>
-                            </View>
-                            <Text style={styles.cardDetail}>To: {d.delivered_person}  ·  {pmLabel(d.payment_method)}</Text>
-                            {d.lat && d.lng && (
-                              <TouchableOpacity style={styles.mapBtn}
-                                onPress={() => Linking.openURL(`https://www.google.com/maps?q=${d.lat},${d.lng}&label=${d.invoice_number}`)}>
-                                <Text style={styles.mapBtnTxt}>📍 View delivery location</Text>
-                              </TouchableOpacity>
-                            )}
-                            <Text style={styles.cardTime}>{formatDate(d.created_at)}</Text>
-                          </View>
-                        ))}
-                        <View style={{ height: 20 }} />
-                      </ScrollView>
-                    </>
-                  ) : (
-                    <>
-                      <FilterBar selected={historyFilter} onSelect={setHistoryFilter} filters={HISTORY_FILTERS} />
-                      <ScrollView>
-                        {sessions.length === 0 && <Text style={styles.empty}>No work sessions found</Text>}
-                        {sessions.map((s) => {
-                          const dur = s.ended_at
-                            ? Math.round((new Date(s.ended_at) - new Date(s.started_at)) / 60000)
-                            : null;
-                          return (
-                            <TouchableOpacity key={s.id} style={[styles.card, styles.cardLeft, { borderLeftColor: col }]}
-                              onPress={() => openSessionRoute(s)}>
-                              <View style={styles.cardTopRow}>
-                                <Text style={styles.cardTitle}>{s.work_date}</Text>
-                                <View style={[styles.badge, { backgroundColor: s.ended_at ? C.greenL : C.redL }]}>
-                                  <Text style={[styles.badgeTxt, { color: s.ended_at ? '#145A32' : C.redD }]}>
-                                    {s.ended_at ? 'Completed' : 'In progress'}
-                                  </Text>
-                                </View>
-                              </View>
-                              <Text style={styles.cardDetail}>
-                                Started {formatDate(s.started_at)}{s.ended_at ? `  ·  Stopped ${formatDate(s.ended_at)}` : ''}
-                              </Text>
-                              {dur != null && <Text style={styles.cardDetail}>Duration: {Math.floor(dur/60)}h {dur%60}m</Text>}
-                              <Text style={styles.mapBtnTxt}>🗺️ Tap to view route on map</Text>
-                            </TouchableOpacity>
-                          );
-                        })}
-                        <View style={{ height: 20 }} />
-                      </ScrollView>
-                    </>
-                  )}
+                        </View>
+                        <Text style={styles.cardDetail}>To: {d.delivered_person}  ·  {pmLabel(d.payment_method)}</Text>
+                        {d.lat && d.lng && (
+                          <TouchableOpacity style={styles.mapBtn}
+                            onPress={() => Linking.openURL(`https://www.google.com/maps?q=${d.lat},${d.lng}&label=${d.invoice_number}`)}>
+                            <Text style={styles.mapBtnTxt}>📍 View delivery location</Text>
+                          </TouchableOpacity>
+                        )}
+                        <Text style={styles.cardTime}>{formatDate(d.created_at)}</Text>
+                      </View>
+                    ))}
+                    <View style={{ height: 20 }} />
+                  </ScrollView>
 
                   <TouchableOpacity
                     style={[styles.submitBtn, { backgroundColor: C.destroy, marginTop: 8 }]}
@@ -1066,62 +979,6 @@ const handleAddSalesman = async () => {
                 </>
               );
             })()}
-          </View>
-        </View>
-      </Modal>
-
-      {/* ── Route Map Modal — point 3 ── */}
-      <Modal visible={routeModal} animationType="slide" transparent>
-        <View style={styles.overlay}>
-          <View style={[styles.sheet, { maxHeight: '90%', padding: 0, overflow: 'hidden' }]}>
-            <View style={{ padding: 20, paddingBottom: 12 }}>
-              <View style={styles.sheetHandle} />
-              <View style={styles.cardTopRow}>
-                <Text style={styles.sheetTitle}>
-                  {routeSession ? `Route · ${routeSession.work_date}` : 'Route'}
-                </Text>
-                <TouchableOpacity onPress={() => setRouteModal(false)}>
-                  <Text style={styles.closeBtn}>✕</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-            {routeLoading ? (
-              <View style={{ height: 400, alignItems: 'center', justifyContent: 'center' }}>
-                <ActivityIndicator color={C.red} />
-              </View>
-            ) : routePoints.length > 0 ? (
-              <MapView
-                style={{ height: 420 }}
-                initialRegion={{
-                  latitude: routePoints[0].lat,
-                  longitude: routePoints[0].lng,
-                  latitudeDelta: 0.05,
-                  longitudeDelta: 0.05,
-                }}>
-                <Polyline
-                  coordinates={routePoints.map(p => ({ latitude: p.lat, longitude: p.lng }))}
-                  strokeColor={C.red}
-                  strokeWidth={4}
-                />
-                <Marker
-                  coordinate={{ latitude: routePoints[0].lat, longitude: routePoints[0].lng }}
-                  title="Start"
-                  pinColor="green"
-                />
-                <Marker
-                  coordinate={{
-                    latitude: routePoints[routePoints.length-1].lat,
-                    longitude: routePoints[routePoints.length-1].lng
-                  }}
-                  title="Latest / End"
-                  pinColor="red"
-                />
-              </MapView>
-            ) : (
-              <View style={{ height: 400, alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-                <Text style={styles.empty}>No location points recorded for this session</Text>
-              </View>
-            )}
           </View>
         </View>
       </Modal>
@@ -1305,16 +1162,5 @@ credBtn: {
 
   summaryRow: { marginBottom: 12, gap: 3 },
   summaryTxt: { fontSize: 11.5, color: C.t2, fontWeight: '600' },
-
-  sectionToggle: {
-    flexDirection: 'row', gap: 8, marginBottom: 10,
-  },
-  sectionToggleBtn: {
-    flex: 1, paddingVertical: 9, borderRadius: 10, alignItems: 'center',
-    borderWidth: 1.5, borderColor: '#DDD',
-  },
-  sectionToggleBtnOn: { borderColor: C.red, backgroundColor: C.redL },
-  sectionToggleTxt: { fontSize: 12.5, fontWeight: '700', color: C.t2 },
-  sectionToggleTxtOn: { color: C.red },
 
 });
