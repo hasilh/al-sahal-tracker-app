@@ -5,6 +5,7 @@ import {
   RefreshControl, StatusBar, Platform, Linking
 } from 'react-native';
 import * as Location from 'expo-location';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { startTracking, stopTracking, isTracking } from '../services/location';
 import {
@@ -59,10 +60,19 @@ function getGreeting() {
   return 'Good night';
 }
 
+// Supabase returns "timestamp without time zone" with no Z/offset suffix, so
+// JS engines wrongly parse it as local device time instead of UTC. Force UTC
+// parsing, then render in Oman time (UTC+4, no DST).
+function asUTC(ts) {
+  if (!ts) return null;
+  const iso = /[Zz]|[+-]\d\d:\d\d$/.test(ts) ? ts : ts + 'Z';
+  return new Date(iso);
+}
+
 function formatDate(ts) {
-  if (!ts) return '';
-  // Convert to Oman time (UTC+4)
-  const d = new Date(new Date(ts).getTime() + (4 * 60 * 60 * 1000));
+  const src = asUTC(ts);
+  if (!src) return '';
+  const d = new Date(src.getTime() + (4 * 60 * 60 * 1000));
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const hh = d.getUTCHours().toString().padStart(2,'0');
   const mm = d.getUTCMinutes().toString().padStart(2,'0');
@@ -77,8 +87,44 @@ const FILTERS = [
   { key: 'older', label: 'Older' },
 ];
 
+// Defined at module scope (not inside the component) so React Native treats
+// them as stable component types across re-renders. Defining these inline
+// inside the component body causes the TextInput to remount on every
+// keystroke, which drops focus and makes typing feel broken.
+function FilterBar({ selected, onSelect }) {
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false}
+      style={styles.filterScroll} contentContainerStyle={{ paddingRight: 8 }}>
+      {FILTERS.map(f => (
+        <TouchableOpacity key={f.key}
+          style={[styles.filterPill, selected===f.key && styles.filterPillOn]}
+          onPress={() => onSelect(f.key)}>
+          <Text style={[styles.filterPillTxt, selected===f.key && styles.filterPillTxtOn]}>{f.label}</Text>
+        </TouchableOpacity>
+      ))}
+    </ScrollView>
+  );
+}
+
+function SearchBar({ value, onChange, placeholder }) {
+  return (
+    <View style={styles.searchBar}>
+      <Text style={styles.searchIcon}>🔍</Text>
+      <TextInput
+        style={styles.searchInput}
+        placeholder={placeholder || 'Search…'}
+        placeholderTextColor={C.t3}
+        value={value}
+        onChangeText={onChange}
+        clearButtonMode="while-editing"
+      />
+    </View>
+  );
+}
+
 export default function SalesmanDashboard({ route, navigation }) {
   const { name } = route.params || {};
+  const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState('home');
   const [tracking, setTracking] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -460,33 +506,6 @@ const handleLogDelivery = async () => {
     </View>
   );
 
-  const FilterBar = ({ selected, onSelect }) => (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false}
-      style={styles.filterScroll} contentContainerStyle={{ paddingRight: 8 }}>
-      {FILTERS.map(f => (
-        <TouchableOpacity key={f.key}
-          style={[styles.filterPill, selected===f.key && styles.filterPillOn]}
-          onPress={() => onSelect(f.key)}>
-          <Text style={[styles.filterPillTxt, selected===f.key && styles.filterPillTxtOn]}>{f.label}</Text>
-        </TouchableOpacity>
-      ))}
-    </ScrollView>
-  );
-
-  const SearchBar = ({ value, onChange, placeholder }) => (
-    <View style={styles.searchBar}>
-      <Text style={styles.searchIcon}>🔍</Text>
-      <TextInput
-        style={styles.searchInput}
-        placeholder={placeholder || 'Search…'}
-        placeholderTextColor={C.t3}
-        value={value}
-        onChangeText={onChange}
-        clearButtonMode="while-editing"
-      />
-    </View>
-  );
-
   const openVisitLocation = (lat, lng, company) => {
     if (!lat || !lng) return Alert.alert('No location', 'No location was saved for this visit.');
     Linking.openURL(`https://www.google.com/maps?q=${lat},${lng}&label=${company}`);
@@ -574,7 +593,7 @@ const handleLogDelivery = async () => {
         {filteredVisits.length === 0 && <Text style={styles.empty}>No visits found</Text>}
         <View style={{ height: 80 }} />
       </ScrollView>
-      <TouchableOpacity style={styles.fab} onPress={() => setVisitModal(true)}>
+      <TouchableOpacity style={[styles.fab, { bottom: 90 + insets.bottom }]} onPress={() => setVisitModal(true)}>
         <Text style={styles.fabTxt}>+</Text>
       </TouchableOpacity>
     </>
@@ -596,7 +615,7 @@ const handleLogDelivery = async () => {
         {filteredDeliveries.length === 0 && <Text style={styles.empty}>No deliveries found</Text>}
         <View style={{ height: 80 }} />
       </ScrollView>
-      <TouchableOpacity style={styles.fab} onPress={() => setDeliveryModal(true)}>
+      <TouchableOpacity style={[styles.fab, { bottom: 90 + insets.bottom }]} onPress={() => setDeliveryModal(true)}>
         <Text style={styles.fabTxt}>+</Text>
       </TouchableOpacity>
     </>
@@ -670,7 +689,7 @@ const handleLogDelivery = async () => {
         {filteredSalesLog.length === 0 && <Text style={styles.empty}>No sales logged</Text>}
         <View style={{ height: 80 }} />
       </ScrollView>
-      <TouchableOpacity style={styles.fab} onPress={() => setSaleModal(true)}>
+      <TouchableOpacity style={[styles.fab, { bottom: 90 + insets.bottom }]} onPress={() => setSaleModal(true)}>
         <Text style={styles.fabTxt}>+</Text>
       </TouchableOpacity>
     </>
@@ -700,7 +719,7 @@ const handleLogDelivery = async () => {
       </View>
 
       {/* Bottom tab bar */}
-      <View style={styles.tabBar}>
+      <View style={[styles.tabBar, { paddingBottom: Math.max(insets.bottom, 10) + 10 }]}>
         {[
           { key: 'home', label: 'Home', icon: '🏠' },
           { key: 'visits', label: 'Visits', icon: '📍' },

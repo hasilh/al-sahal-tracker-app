@@ -29,10 +29,19 @@ const shadow = {
   shadowOpacity: 0.07, shadowRadius: 10, elevation: 3,
 };
 
+// Supabase returns "timestamp without time zone" with no Z/offset suffix, so
+// JS engines wrongly parse it as local device time instead of UTC. Force UTC
+// parsing, then render in Oman time (UTC+4, no DST).
+function asUTC(ts) {
+  if (!ts) return null;
+  const iso = /[Zz]|[+-]\d\d:\d\d$/.test(ts) ? ts : ts + 'Z';
+  return new Date(iso);
+}
+
 function formatDate(ts) {
-  if (!ts) return '';
-  // Convert to Oman time (UTC+4)
-  const d = new Date(new Date(ts).getTime() + (4 * 60 * 60 * 1000));
+  const src = asUTC(ts);
+  if (!src) return '';
+  const d = new Date(src.getTime() + (4 * 60 * 60 * 1000));
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const hh = d.getUTCHours().toString().padStart(2,'0');
   const mm = d.getUTCMinutes().toString().padStart(2,'0');
@@ -40,7 +49,9 @@ function formatDate(ts) {
 }
 
 function timeAgo(ts) {
-  const diff = Math.floor((Date.now() - new Date(ts)) / 1000);
+  const src = asUTC(ts);
+  if (!src) return '';
+  const diff = Math.floor((Date.now() - src.getTime()) / 1000);
   if (diff < 60) return `${diff}s ago`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
@@ -48,8 +59,9 @@ function timeAgo(ts) {
 }
 
 function formatDateFull(ts) {
-  if (!ts) return '';
-  const d = new Date(new Date(ts).getTime() + (4 * 60 * 60 * 1000));
+  const src = asUTC(ts);
+  if (!src) return '';
+  const d = new Date(src.getTime() + (4 * 60 * 60 * 1000));
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   const hh = d.getUTCHours().toString().padStart(2,'0');
@@ -85,6 +97,54 @@ const DETAIL_FILTERS = [
   { key: 'month', label: 'This Month' },
   { key: 'all', label: 'All Time' },
 ];
+
+// Defined at module scope (not inside the component) so React Native treats
+// them as stable component types across re-renders. Defining these inline
+// inside the component body causes the TextInput to remount on every
+// keystroke, which drops focus and makes typing feel broken.
+const filterScrollRefs = {};
+function FilterBar({ selected, onSelect, filters = FILTERS, scrollId = 'default' }) {
+  const selectedIndex = filters.findIndex(f => f.key === selected);
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={styles.filterScroll}
+      contentContainerStyle={{ paddingRight: 8 }}
+      ref={ref => { filterScrollRefs[scrollId] = ref; }}
+      onContentSizeChange={() => {
+        if (selectedIndex > 2 && filterScrollRefs[scrollId]) {
+          filterScrollRefs[scrollId].scrollToEnd({ animated: false });
+        } else if (selectedIndex <= 1 && filterScrollRefs[scrollId]) {
+          filterScrollRefs[scrollId].scrollTo({ x: 0, animated: false });
+        }
+      }}>
+      {filters.map(f => (
+        <TouchableOpacity key={f.key}
+          style={[styles.filterPill, selected === f.key && styles.filterPillOn]}
+          onPress={() => onSelect(f.key)}>
+          <Text style={[styles.filterPillTxt, selected === f.key && styles.filterPillTxtOn]}>{f.label}</Text>
+        </TouchableOpacity>
+      ))}
+    </ScrollView>
+  );
+}
+
+function SearchBar({ value, onChange, placeholder }) {
+  return (
+    <View style={styles.searchBar}>
+      <Text style={styles.searchIcon}>🔍</Text>
+      <TextInput
+        style={styles.searchInput}
+        placeholder={placeholder}
+        placeholderTextColor={C.t3}
+        value={value}
+        onChangeText={onChange}
+        clearButtonMode="while-editing"
+      />
+    </View>
+  );
+}
 
 export default function AdminDashboard({ navigation }) {
   const [tab, setTab] = useState('salesmen');
@@ -354,48 +414,6 @@ const handleAddSalesman = async () => {
     ['invoice_number','_to']);
   const filteredPaid = searchFilter(paid, paidSearch,
     ['invoice_number','delivered_person','payment_method']);
-
-  const filterScrollRefs = {};
-  const FilterBar = ({ selected, onSelect, filters = FILTERS, scrollId = 'default' }) => {
-    const selectedIndex = filters.findIndex(f => f.key === selected);
-    return (
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.filterScroll}
-        contentContainerStyle={{ paddingRight: 8 }}
-        ref={ref => { filterScrollRefs[scrollId] = ref; }}
-        onContentSizeChange={() => {
-          if (selectedIndex > 2 && filterScrollRefs[scrollId]) {
-            filterScrollRefs[scrollId].scrollToEnd({ animated: false });
-          } else if (selectedIndex <= 1 && filterScrollRefs[scrollId]) {
-            filterScrollRefs[scrollId].scrollTo({ x: 0, animated: false });
-          }
-        }}>
-        {filters.map(f => (
-          <TouchableOpacity key={f.key}
-            style={[styles.filterPill, selected === f.key && styles.filterPillOn]}
-            onPress={() => onSelect(f.key)}>
-            <Text style={[styles.filterPillTxt, selected === f.key && styles.filterPillTxtOn]}>{f.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-    );
-  };
-
-  const SearchBar = ({ value, onChange, placeholder }) => (
-    <View style={styles.searchBar}>
-      <Text style={styles.searchIcon}>🔍</Text>
-      <TextInput
-        style={styles.searchInput}
-        placeholder={placeholder}
-        placeholderTextColor={C.t3}
-        value={value}
-        onChangeText={onChange}
-        clearButtonMode="while-editing"
-      />
-    </View>
-  );
 
   const pmLabel = (pm) => {
     if (pm === 'bank') return 'Bank Transfer';
@@ -819,7 +837,7 @@ const handleAddSalesman = async () => {
 {/* ── Salesman Detail Modal ── */}
       <Modal visible={detailModal} animationType="slide" transparent>
         <View style={styles.overlay}>
-          <View style={[styles.sheet, { maxHeight: '92%' }]}>
+          <View style={[styles.sheet, { maxHeight: '92%', flex: 1, flexShrink: 1 }]}>
             <View style={styles.sheetHandle} />
             {selectedSalesman && (() => {
               const col = COLORS[salesmen.findIndex(s => s.id === selectedSalesman.id) % COLORS.length] || '#8E44AD';
@@ -829,7 +847,7 @@ const handleAddSalesman = async () => {
               const uniqueCompanies = [...new Set(salesmanVisits.map(v => v.company_name))].length;
               return (
                 <>
-                  {/* Header */}
+                  {/* Fixed top section — header, target, stats, filters (does not scroll) */}
                   <View style={styles.detailHeader}>
                     <View style={[styles.av, { backgroundColor: col, width: 48, height: 48, borderRadius: 24 }]}>
                       <Text style={[styles.avTxt, { fontSize: 18 }]}>{initials(selectedSalesman.name)}</Text>
@@ -849,83 +867,87 @@ const handleAddSalesman = async () => {
                     </TouchableOpacity>
                   </View>
 
-                  {/* Credentials box */}
-                  <TouchableOpacity
-                    style={styles.credBtn}
-                    onPress={() => handleViewCredentials(selectedSalesman)}>
-                    <Text style={styles.credBtnTxt}>
-                      {credLoading ? 'Loading…' : credentials ? `📧 ${credentials.email}   🔑 ${credentials.password_plain || '(not stored)'}` : '👁 View Login Credentials'}
-                    </Text>
-                  </TouchableOpacity>
-
-                  {/* Sales Target */}
-                  <View style={styles.targetBox}>
-                    <Text style={styles.sectionLabelSm}>SALES TARGET · THIS MONTH</Text>
-                    <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 6, marginTop: 2 }}>
-                      <Text style={styles.targetAchieved}>{Number(salesmanTarget.achieved_amount || 0).toFixed(0)}</Text>
-                      <Text style={styles.targetSlash}>/ {Number(salesmanTarget.target_amount || 0).toFixed(0)} OMR</Text>
-                    </View>
-                    <View style={styles.targetBarBg}>
-                      <View style={[styles.targetBarFill, {
-                        width: `${salesmanTarget.target_amount > 0
-                          ? Math.min(100, (salesmanTarget.achieved_amount / salesmanTarget.target_amount) * 100)
-                          : 0}%`
-                      }]} />
-                    </View>
-                    <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
-                      <TextInput style={[styles.input, { flex: 1, height: 40 }]}
-                        placeholder="Set new target (OMR)" placeholderTextColor={C.t3}
-                        value={targetInput} onChangeText={setTargetInput} keyboardType="decimal-pad" />
-                      <TouchableOpacity style={styles.targetSaveBtn} onPress={handleSaveTarget} disabled={targetSaving}>
-                        {targetSaving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.targetSaveTxt}>Save</Text>}
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-
-                  {/* Today vs All-time counts — point 4 */}
-                  {salesmanSummary && (
-                    <View style={styles.summaryRow}>
-                      <Text style={styles.summaryTxt}>
-                        Today: {salesmanSummary.visits_today} visits · {salesmanSummary.deliveries_today} deliveries
-                      </Text>
-                      <Text style={styles.summaryTxt}>
-                        All-time: {salesmanSummary.visits_total} visits · {salesmanSummary.deliveries_total} deliveries
-                      </Text>
-                    </View>
-                  )}
-
-                  {/* Stats */}
-                  <View style={[styles.statsRow, { backgroundColor: 'transparent', borderBottomWidth: 0, padding: 0, paddingBottom: 8 }]}>
-                    <View style={styles.statCard}>
-                      <Text style={[styles.statVal, { color: C.navy, fontSize: 20 }]}>{salesmanVisits.length}</Text>
-                      <Text style={styles.statLbl}>Visits</Text>
-                    </View>
-                    <View style={styles.statCard}>
-                      <Text style={[styles.statVal, { color: C.green, fontSize: 20 }]}>{uniqueCompanies}</Text>
-                      <Text style={styles.statLbl}>Companies</Text>
-                    </View>
-                    <View style={styles.statCard}>
-                      <Text style={[styles.statVal, { color: C.red, fontSize: 20 }]}>{salesmanDeliveries.length}</Text>
-                      <Text style={styles.statLbl}>Deliveries</Text>
-                    </View>
-                  </View>
-
-                  {/* Live location button */}
-                  {isOn && (
+                  {/* Everything below scrolls together in one region that's
+                      capped to the remaining space — the delete button sits
+                      outside this ScrollView entirely, as a fixed footer, so
+                      it never moves regardless of how much activity exists. */}
+                  <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+                    {/* Credentials box */}
                     <TouchableOpacity
-                      style={styles.liveLocBtn}
-                      onPress={() => loc
-                        ? openMap(loc.lat, loc.lng, selectedSalesman.name)
-                        : Alert.alert('No location', 'No location data yet')}>
-                      <Text style={styles.liveLocTxt}>
-                        📍 Live Location {loc ? `· ${timeAgo(loc.recorded_at)}` : '· No data yet'}
+                      style={styles.credBtn}
+                      onPress={() => handleViewCredentials(selectedSalesman)}>
+                      <Text style={styles.credBtnTxt}>
+                        {credLoading ? 'Loading…' : credentials ? `📧 ${credentials.email}   🔑 ${credentials.password_plain || '(not stored)'}` : '👁 View Login Credentials'}
                       </Text>
                     </TouchableOpacity>
-                  )}
 
-                  <FilterBar selected={detailFilter} onSelect={setDetailFilter} filters={DETAIL_FILTERS} />
+                    {/* Sales Target */}
+                    <View style={styles.targetBox}>
+                      <Text style={styles.sectionLabelSm}>SALES TARGET · THIS MONTH</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 6, marginTop: 2 }}>
+                        <Text style={styles.targetAchieved}>{Number(salesmanTarget.achieved_amount || 0).toFixed(0)}</Text>
+                        <Text style={styles.targetSlash}>/ {Number(salesmanTarget.target_amount || 0).toFixed(0)} OMR</Text>
+                      </View>
+                      <View style={styles.targetBarBg}>
+                        <View style={[styles.targetBarFill, {
+                          width: `${salesmanTarget.target_amount > 0
+                            ? Math.min(100, (salesmanTarget.achieved_amount / salesmanTarget.target_amount) * 100)
+                            : 0}%`
+                        }]} />
+                      </View>
+                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+                        <TextInput style={[styles.input, { flex: 1, height: 40 }]}
+                          placeholder="Set new target (OMR)" placeholderTextColor={C.t3}
+                          value={targetInput} onChangeText={setTargetInput} keyboardType="decimal-pad" />
+                        <TouchableOpacity style={styles.targetSaveBtn} onPress={handleSaveTarget} disabled={targetSaving}>
+                          {targetSaving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.targetSaveTxt}>Save</Text>}
+                        </TouchableOpacity>
+                      </View>
+                    </View>
 
-                  <ScrollView>
+                    {/* Today vs All-time counts — point 4 */}
+                    {salesmanSummary && (
+                      <View style={styles.summaryRow}>
+                        <Text style={styles.summaryTxt}>
+                          Today: {salesmanSummary.visits_today} visits · {salesmanSummary.deliveries_today} deliveries
+                        </Text>
+                        <Text style={styles.summaryTxt}>
+                          All-time: {salesmanSummary.visits_total} visits · {salesmanSummary.deliveries_total} deliveries
+                        </Text>
+                      </View>
+                    )}
+
+                    {/* Stats */}
+                    <View style={[styles.statsRow, { backgroundColor: 'transparent', borderBottomWidth: 0, padding: 0, paddingBottom: 8 }]}>
+                      <View style={styles.statCard}>
+                        <Text style={[styles.statVal, { color: C.navy, fontSize: 20 }]}>{salesmanVisits.length}</Text>
+                        <Text style={styles.statLbl}>Visits</Text>
+                      </View>
+                      <View style={styles.statCard}>
+                        <Text style={[styles.statVal, { color: C.green, fontSize: 20 }]}>{uniqueCompanies}</Text>
+                        <Text style={styles.statLbl}>Companies</Text>
+                      </View>
+                      <View style={styles.statCard}>
+                        <Text style={[styles.statVal, { color: C.red, fontSize: 20 }]}>{salesmanDeliveries.length}</Text>
+                        <Text style={styles.statLbl}>Deliveries</Text>
+                      </View>
+                    </View>
+
+                    {/* Live location button */}
+                    {isOn && (
+                      <TouchableOpacity
+                        style={styles.liveLocBtn}
+                        onPress={() => loc
+                          ? openMap(loc.lat, loc.lng, selectedSalesman.name)
+                          : Alert.alert('No location', 'No location data yet')}>
+                        <Text style={styles.liveLocTxt}>
+                          📍 Live Location {loc ? `· ${timeAgo(loc.recorded_at)}` : '· No data yet'}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+
+                    <FilterBar selected={detailFilter} onSelect={setDetailFilter} filters={DETAIL_FILTERS} />
+
                     {salesmanVisits.length === 0 && salesmanDeliveries.length === 0 &&
                       <Text style={styles.empty}>No activity found</Text>}
 
@@ -968,11 +990,12 @@ const handleAddSalesman = async () => {
                         <Text style={styles.cardTime}>{formatDate(d.created_at)}</Text>
                       </View>
                     ))}
-                    <View style={{ height: 20 }} />
+                    <View style={{ height: 12 }} />
                   </ScrollView>
 
+                  {/* Fixed footer — always visible, never pushed by content above */}
                   <TouchableOpacity
-                    style={[styles.submitBtn, { backgroundColor: C.destroy, marginTop: 8 }]}
+                    style={[styles.submitBtn, { backgroundColor: C.destroy, marginTop: 10 }]}
                     onPress={() => handleDeleteSalesman(selectedSalesman)}>
                     <Text style={styles.submitTxt}>Delete Salesman Account</Text>
                   </TouchableOpacity>

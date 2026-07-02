@@ -3,6 +3,7 @@ import { NavigationContainer, createNavigationContainerRef } from '@react-naviga
 import * as Notifications from 'expo-notifications';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { ActivityIndicator, View } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { getToken, removeToken } from './services/api';
 
 import LoginScreen from './screens/LoginScreen';
@@ -62,25 +63,29 @@ export default function App() {
 
   if (!initialRoute) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F4F5F7' }}>
-        <ActivityIndicator size="large" color="#C0392B" />
-      </View>
+      <SafeAreaProvider>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F4F5F7' }}>
+          <ActivityIndicator size="large" color="#C0392B" />
+        </View>
+      </SafeAreaProvider>
     );
   }
 
   return (
-    <NavigationContainer ref={navigationRef}>
-      <Stack.Navigator
-        initialRouteName={initialRoute}
-        screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="Login" component={LoginScreen} />
-        <Stack.Screen
-          name="SalesmanDashboard"
-          component={SalesmanDashboard}
-          initialParams={initialParams}
-        />
-        <Stack.Screen name="AdminDashboard" component={AdminDashboard} />
-      </Stack.Navigator>
-    </NavigationContainer>
+    <SafeAreaProvider>
+      <NavigationContainer ref={navigationRef}>
+        <Stack.Navigator
+          initialRouteName={initialRoute}
+          screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="Login" component={LoginScreen} />
+          <Stack.Screen
+            name="SalesmanDashboard"
+            component={SalesmanDashboard}
+            initialParams={initialParams}
+          />
+          <Stack.Screen name="AdminDashboard" component={AdminDashboard} />
+        </Stack.Navigator>
+      </NavigationContainer>
+    </SafeAreaProvider>
   );
 }
