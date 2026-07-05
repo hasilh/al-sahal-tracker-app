@@ -65,6 +65,22 @@ export const getVisits = async (filter, user_id) => {
   return res.data;
 };
 
+export const requestVisitEdit = async (id, data) => {
+  const token = await getToken();
+  const res = await axios.patch(`${BASE_URL}/api/visits/${id}/request-edit`, data, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  return res.data;
+};
+
+export const approveVisitEdit = async (id, approve) => {
+  const token = await getToken();
+  const res = await axios.patch(`${BASE_URL}/api/visits/${id}/approve-edit`, { approve }, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  return res.data;
+};
+
 // Deliveries
 export const logDelivery = async (deliveryData) => {
   const token = await getToken();
@@ -122,6 +138,31 @@ export const approvePayment = async (id) => {
   return res.data;
 };
 
+export const adminMarkPaid = async (id, payment_method) => {
+  const token = await getToken();
+  const res = await axios.patch(`${BASE_URL}/api/deliveries/admin-mark-paid/${id}`,
+    { payment_method },
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  return res.data;
+};
+
+export const requestDeliveryEdit = async (id, data) => {
+  const token = await getToken();
+  const res = await axios.patch(`${BASE_URL}/api/deliveries/request-edit/${id}`, data, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  return res.data;
+};
+
+export const approveDeliveryEdit = async (id, approve) => {
+  const token = await getToken();
+  const res = await axios.patch(`${BASE_URL}/api/deliveries/approve-edit/${id}`, { approve }, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  return res.data;
+};
+
 // Admin
 export const createSalesman = async (name, email, password) => {
   const token = await getToken();
@@ -163,7 +204,6 @@ export const deleteSalesman = async (id) => {
   return res.data;
 };
 
-// ADD at the bottom:
 export const getSalesmanCredentials = async (id) => {
   const token = await getToken();
   const res = await axios.get(`${BASE_URL}/api/admin/salesmen/${id}/credentials`, {
@@ -172,7 +212,6 @@ export const getSalesmanCredentials = async (id) => {
   return res.data;
 };
 
-// Salesman summary — point 4 (admin view of today + total counts)
 export const getSalesmanSummary = async (id) => {
   const token = await getToken();
   const res = await axios.get(`${BASE_URL}/api/admin/salesmen/${id}/summary`, {
@@ -181,7 +220,6 @@ export const getSalesmanSummary = async (id) => {
   return res.data;
 };
 
-// Sales targets — point 5
 export const setSalesTarget = async (user_id, month, target_amount) => {
   const token = await getToken();
   const res = await axios.post(`${BASE_URL}/api/admin/sales-target`,
@@ -202,7 +240,7 @@ export const getSalesTarget = async (user_id, month) => {
   return res.data;
 };
 
-// Sales log — point 6
+// Sales log
 export const logSale = async (saleData) => {
   const token = await getToken();
   const res = await axios.post(`${BASE_URL}/api/sales`, saleData, {
