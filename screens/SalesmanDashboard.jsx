@@ -29,12 +29,6 @@ try {
   console.log('expo-notifications not available');
 }
 
-if (Notifications) {
-  Notifications.setNotificationCategoryAsync('work-reminder', [
-    { identifier: 'DISMISS', buttonTitle: 'OK, stop reminders today', options: { isDestructive: true } },
-  ]).catch(() => {});
-}
-
 const C = {
   red: '#C0392B', redD: '#A93226', redL: '#FADBD8',
   navy: '#2C3E50', green: '#27AE60', greenL: '#D5F5E3',
@@ -181,11 +175,23 @@ export default function SalesmanDashboard({ route, navigation }) {
   // Sale modal
   const [saleModal, setSaleModal] = useState(false);
   const [saleInvoiceNo, setSaleInvoiceNo] = useState('');
+  const [saleCompany, setSaleCompany] = useState('');
   const [saleDeliveredTo, setSaleDeliveredTo] = useState('');
   const [saleAmount, setSaleAmount] = useState('');
   const [salePayType, setSalePayType] = useState('cash');
   const [saleCashType, setSaleCashType] = useState('cash');
   const [sLoading, setSLoading] = useState(false);
+
+  // Edit sale modal
+  const [editSaleModal, setEditSaleModal] = useState(false);
+  const [editingSale, setEditingSale] = useState(null);
+  const [editSaleInvoice, setEditSaleInvoice] = useState('');
+  const [editSaleCompany, setEditSaleCompany] = useState('');
+  const [editSaleTo, setEditSaleTo] = useState('');
+  const [editSaleAmount, setEditSaleAmount] = useState('');
+  const [editSalePayType, setEditSalePayType] = useState('cash');
+  const [editSaleCashType, setEditSaleCashType] = useState('cash');
+  const [editSLoading, setEditSLoading] = useState(false);
 
   // Payment modal
   const [payModal, setPayModal] = useState(false);
@@ -204,10 +210,7 @@ export default function SalesmanDashboard({ route, navigation }) {
     checkTracking();
     loadAll();
     setupNotifications();
-    const sub = Notifications?.addNotificationResponseReceivedListener?.((resp) => {
-      if (resp.actionIdentifier === 'DISMISS') dismissedTodayRef.current = true;
-    });
-    return () => { clearNotifInterval(); sub?.remove(); };
+    return () => { clearNotifInterval(); };
   }, []);
 
   const setupNotifications = async () => {
@@ -240,7 +243,6 @@ export default function SalesmanDashboard({ route, navigation }) {
               title: 'Al Sahal · Work Started?',
               body: "Don't forget to mark your work as started for today!",
               sound: true,
-              categoryIdentifier: 'work-reminder',
             },
             trigger: null,
           });
@@ -444,17 +446,23 @@ export default function SalesmanDashboard({ route, navigation }) {
     finally { setEditDLoading(false); }
   };
 
-  // ── Sale handler ───────────────────────────────────────────────
+  // ── Sale handlers ──────────────────────────────────────────────
   const handleLogSale = async () => {
     if (!saleInvoiceNo.trim() || !saleDeliveredTo.trim())
       return Alert.alert('Required', 'Invoice number and delivered to are required.');
     const pm = resolvedPaymentMethod(salePayType, saleCashType);
     setSLoading(true);
     try {
-      await logSale({ invoice_number: saleInvoiceNo.trim(), delivered_to: saleDeliveredTo.trim(), amount: Number(saleAmount) || 0, payment_method: pm });
+      await logSale({
+        invoice_number: saleInvoiceNo.trim(),
+        company_name: saleCompany.trim() || null,
+        delivered_to: saleDeliveredTo.trim(),
+        amount: Number(saleAmount) || 0,
+        payment_method: pm
+      });
       setSaleModal(false);
-      setSaleInvoiceNo(''); setSaleDeliveredTo(''); setSaleAmount('');
-      setSalePayType('cash'); setSaleCashType('cash');
+      setSaleInvoiceNo(''); setSaleCompany(''); setSaleDeliveredTo('');
+      setSaleAmount(''); setSalePayType('cash'); setSaleCashType('cash');
       await loadSalesLog();
       await loadNotPaid();
       if (pm !== 'not_paid') await loadSalesTarget();
@@ -463,6 +471,42 @@ export default function SalesmanDashboard({ route, navigation }) {
       console.log('logSale error:', e?.response?.data || e.message);
       Alert.alert('Error', e?.response?.data?.error || 'Failed to save sale');
     } finally { setSLoading(false); }
+  };
+
+  const openEditSale = (s) => {
+    setEditingSale(s);
+    setEditSaleInvoice(s.invoice_number || '');
+    setEditSaleCompany(s.company_name || '');
+    setEditSaleTo(s.delivered_to || '');
+    setEditSaleAmount(String(s.amount || ''));
+    const pm = s.payment_method;
+    if (pm === 'cash' || pm === 'bank') {
+      setEditSalePayType('cash');
+      setEditSaleCashType(pm);
+    } else {
+      setEditSalePayType(pm || 'cash');
+      setEditSaleCashType('cash');
+    }
+    setEditSaleModal(true);
+  };
+
+  const handleEditSale = async () => {
+    if (!editSaleInvoice.trim() || !editSaleTo.trim())
+      return Alert.alert('Required', 'Invoice number and delivered to are required.');
+    const pm = resolvedPaymentMethod(editSalePayType, editSaleCashType);
+    setEditSLoading(true);
+    try {
+      await requestDeliveryEdit(editingSale.id, {
+        invoice_number: editSaleInvoice.trim(),
+        company_name: editSaleCompany.trim() || null,
+        delivered_person: editSaleTo.trim(),
+        payment_method: pm
+      });
+      setEditSaleModal(false);
+      loadSalesLog();
+      Alert.alert('Submitted', 'Your edit has been sent to admin for approval.');
+    } catch (e) { Alert.alert('Error', 'Failed to submit edit'); }
+    finally { setEditSLoading(false); }
   };
 
   // ── Payment request ────────────────────────────────────────────
@@ -495,7 +539,7 @@ export default function SalesmanDashboard({ route, navigation }) {
 
   const filteredVisits = searchFilter(visits, visitSearch, ['company_name','contact_name','mobile','email_id']);
   const filteredDeliveries = searchFilter(deliveries, deliverySearch, ['invoice_number','company_name','delivered_person','payment_method']);
-  const filteredSalesLog = searchFilter(salesLog, salesLogSearch, ['invoice_number','delivered_to','payment_method']);
+  const filteredSalesLog = searchFilter(salesLog, salesLogSearch, ['invoice_number','company_name','delivered_to','payment_method']);
   const mergedNotPaid = [
     ...notPaid.map(i => ({ ...i, _source: 'delivery', _to: i.delivered_person })),
     ...notPaidSales.map(i => ({ ...i, _source: 'sales', _to: i.delivered_to })),
@@ -528,7 +572,7 @@ export default function SalesmanDashboard({ route, navigation }) {
     Linking.openURL(`https://www.google.com/maps?q=${lat},${lng}&label=${co}`);
   };
 
-  // ── Tab screens ────────────────────────────────────────────────
+  // ── Home Tab ───────────────────────────────────────────────────
   const HomeTab = () => (
     <ScrollView style={styles.scroll} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
       <View style={[styles.card, { padding: 20, alignItems: 'center' }]}>
@@ -583,6 +627,7 @@ export default function SalesmanDashboard({ route, navigation }) {
     </ScrollView>
   );
 
+  // ── Visits Tab ─────────────────────────────────────────────────
   const VisitsTab = () => (
     <>
       <FilterBar selected={visitFilter} onSelect={setVisitFilter} />
@@ -605,6 +650,7 @@ export default function SalesmanDashboard({ route, navigation }) {
     </>
   );
 
+  // ── Delivery Tab ───────────────────────────────────────────────
   const DeliveryTab = () => (
     <>
       <FilterBar selected={deliveryFilter} onSelect={setDeliveryFilter} />
@@ -626,6 +672,29 @@ export default function SalesmanDashboard({ route, navigation }) {
     </>
   );
 
+  // ── Sales Log Tab ──────────────────────────────────────────────
+  const SalesLogTab = () => (
+    <>
+      <FilterBar selected={salesLogFilter} onSelect={setSalesLogFilter} />
+      <View style={{ paddingHorizontal: 14, paddingBottom: 6 }}>
+        <SearchBar value={salesLogSearch} onChange={setSalesLogSearch} placeholder="Search invoice, company, recipient…" />
+      </View>
+      <ScrollView style={styles.scroll} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
+        <Text style={styles.resultCount}>{filteredSalesLog.length} sale{filteredSalesLog.length !== 1 ? 's' : ''}</Text>
+        {filteredSalesLog.map((s, i) => (
+          <SaleCard key={s.id} s={s} color={SALESMAN_COLORS[i % SALESMAN_COLORS.length]}
+            onEdit={() => openEditSale(s)} />
+        ))}
+        {filteredSalesLog.length === 0 && <Text style={styles.empty}>No sales logged</Text>}
+        <View style={{ height: 80 }} />
+      </ScrollView>
+      <TouchableOpacity style={[styles.fab, { bottom: 90 + insets.bottom }]} onPress={() => setSaleModal(true)}>
+        <Text style={styles.fabTxt}>+</Text>
+      </TouchableOpacity>
+    </>
+  );
+
+  // ── Not Paid Tab ───────────────────────────────────────────────
   const NotPaidTab = () => (
     <>
       <View style={{ paddingHorizontal: 14, paddingTop: 10, paddingBottom: 6 }}>
@@ -636,7 +705,8 @@ export default function SalesmanDashboard({ route, navigation }) {
         {filteredNotPaid.map((inv) => {
           const isPending = inv.status === 'pending_approval';
           return (
-            <View key={`${inv._source}-${inv.id}`} style={[styles.card, styles.cardLeft, { borderLeftColor: isPending ? C.amber : C.red }]}>
+            <View key={`${inv._source}-${inv.id}`} style={[styles.card, styles.cardLeft,
+              { borderLeftColor: isPending ? C.amber : C.red }]}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <Text style={styles.cardTitle}>{inv.invoice_number}</Text>
                 <View style={[styles.badge, { backgroundColor: inv._source === 'sales' ? '#EAF0FB' : '#F4ECFB' }]}>
@@ -666,26 +736,6 @@ export default function SalesmanDashboard({ route, navigation }) {
         {filteredNotPaid.length === 0 && <Text style={styles.empty}>No unpaid invoices 🎉</Text>}
         <View style={{ height: 20 }} />
       </ScrollView>
-    </>
-  );
-
-  const SalesLogTab = () => (
-    <>
-      <FilterBar selected={salesLogFilter} onSelect={setSalesLogFilter} />
-      <View style={{ paddingHorizontal: 14, paddingBottom: 6 }}>
-        <SearchBar value={salesLogSearch} onChange={setSalesLogSearch} placeholder="Search invoice, recipient…" />
-      </View>
-      <ScrollView style={styles.scroll} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
-        <Text style={styles.resultCount}>{filteredSalesLog.length} sale{filteredSalesLog.length !== 1 ? 's' : ''}</Text>
-        {filteredSalesLog.map((s, i) => (
-          <SaleCard key={s.id} s={s} color={SALESMAN_COLORS[i % SALESMAN_COLORS.length]} />
-        ))}
-        {filteredSalesLog.length === 0 && <Text style={styles.empty}>No sales logged</Text>}
-        <View style={{ height: 80 }} />
-      </ScrollView>
-      <TouchableOpacity style={[styles.fab, { bottom: 90 + insets.bottom }]} onPress={() => setSaleModal(true)}>
-        <Text style={styles.fabTxt}>+</Text>
-      </TouchableOpacity>
     </>
   );
 
@@ -753,7 +803,7 @@ export default function SalesmanDashboard({ route, navigation }) {
                 </>
               )}
               <View style={styles.infoBox}>
-                <Text style={styles.infoTxt}>Your current location will be saved with this visit log.</Text>
+                <Text style={styles.infoTxt}>Your current location will be saved with this visit.</Text>
               </View>
               <TouchableOpacity style={styles.submitBtn} onPress={handleLogVisit} disabled={vLoading}>
                 {vLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitTxt}>Save Visit</Text>}
@@ -774,7 +824,7 @@ export default function SalesmanDashboard({ route, navigation }) {
               <View style={styles.sheetHandle} />
               <Text style={styles.sheetTitle}>Edit Visit</Text>
               <View style={styles.infoBox}>
-                <Text style={styles.infoTxt}>Changes require admin approval before they take effect.</Text>
+                <Text style={styles.infoTxt}>Changes require admin approval. Location cannot be changed.</Text>
               </View>
               <Text style={styles.label}>Company Name <Text style={styles.req}>*</Text></Text>
               <TextInput style={styles.input} placeholderTextColor={C.t3} value={editCompany} onChangeText={setEditCompany} />
@@ -822,7 +872,7 @@ export default function SalesmanDashboard({ route, navigation }) {
               <Text style={styles.label}>Amount (OMR)</Text>
               <TextInput style={styles.input} placeholder="0.00" placeholderTextColor={C.t3} value={deliveryAmount} onChangeText={setDeliveryAmount} keyboardType="decimal-pad" />
               <View style={styles.switchRow}>
-                <Text style={styles.label}>My Sales — also log this as a sale?</Text>
+                <Text style={styles.label}>Also log as my sale?</Text>
                 <Switch value={isMySale} onValueChange={setIsMySale} trackColor={{ true: C.green, false: '#DDD' }} thumbColor="#fff" />
               </View>
               <Text style={styles.label}>Payment Method <Text style={styles.req}>*</Text></Text>
@@ -849,7 +899,7 @@ export default function SalesmanDashboard({ route, navigation }) {
               <View style={styles.sheetHandle} />
               <Text style={styles.sheetTitle}>Edit Delivery</Text>
               <View style={styles.infoBox}>
-                <Text style={styles.infoTxt}>Changes require admin approval before they take effect.</Text>
+                <Text style={styles.infoTxt}>Changes require admin approval. Location cannot be changed.</Text>
               </View>
               <Text style={styles.label}>Invoice Number <Text style={styles.req}>*</Text></Text>
               <TextInput style={styles.input} placeholderTextColor={C.t3} value={editInvoiceNo} onChangeText={setEditInvoiceNo} />
@@ -879,6 +929,8 @@ export default function SalesmanDashboard({ route, navigation }) {
               <Text style={styles.sheetTitle}>New Sale Log</Text>
               <Text style={styles.label}>Invoice Number <Text style={styles.req}>*</Text></Text>
               <TextInput style={styles.input} placeholder="INV-2025-XXXX" placeholderTextColor={C.t3} value={saleInvoiceNo} onChangeText={setSaleInvoiceNo} />
+              <Text style={styles.label}>Company Name</Text>
+              <TextInput style={styles.input} placeholder="Company / client name" placeholderTextColor={C.t3} value={saleCompany} onChangeText={setSaleCompany} />
               <Text style={styles.label}>Delivered To <Text style={styles.req}>*</Text></Text>
               <TextInput style={styles.input} placeholder="Person / company name" placeholderTextColor={C.t3} value={saleDeliveredTo} onChangeText={setSaleDeliveredTo} />
               <Text style={styles.label}>Amount (OMR)</Text>
@@ -889,6 +941,37 @@ export default function SalesmanDashboard({ route, navigation }) {
                 {sLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitTxt}>Save Sale</Text>}
               </TouchableOpacity>
               <TouchableOpacity style={styles.cancelBtn} onPress={() => setSaleModal(false)}>
+                <Text style={styles.cancelTxt}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
+
+      {/* ── Edit Sale Modal ── */}
+      <Modal visible={editSaleModal} animationType="slide" transparent>
+        <View style={styles.overlay}>
+          <ScrollView keyboardShouldPersistTaps="handled">
+            <View style={styles.sheet}>
+              <View style={styles.sheetHandle} />
+              <Text style={styles.sheetTitle}>Edit Sale</Text>
+              <View style={styles.infoBox}>
+                <Text style={styles.infoTxt}>Changes require admin approval before they take effect.</Text>
+              </View>
+              <Text style={styles.label}>Invoice Number <Text style={styles.req}>*</Text></Text>
+              <TextInput style={styles.input} placeholderTextColor={C.t3} value={editSaleInvoice} onChangeText={setEditSaleInvoice} />
+              <Text style={styles.label}>Company Name</Text>
+              <TextInput style={styles.input} placeholder="Company / client name" placeholderTextColor={C.t3} value={editSaleCompany} onChangeText={setEditSaleCompany} />
+              <Text style={styles.label}>Delivered To <Text style={styles.req}>*</Text></Text>
+              <TextInput style={styles.input} placeholderTextColor={C.t3} value={editSaleTo} onChangeText={setEditSaleTo} />
+              <Text style={styles.label}>Amount (OMR)</Text>
+              <TextInput style={styles.input} placeholder="0.00" placeholderTextColor={C.t3} value={editSaleAmount} onChangeText={setEditSaleAmount} keyboardType="decimal-pad" />
+              <Text style={styles.label}>Payment Method <Text style={styles.req}>*</Text></Text>
+              <PayTypeSelector type={editSalePayType} setType={setEditSalePayType} cashT={editSaleCashType} setCashT={setEditSaleCashType} />
+              <TouchableOpacity style={[styles.submitBtn, { marginTop: 16 }]} onPress={handleEditSale} disabled={editSLoading}>
+                {editSLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitTxt}>Submit for Approval</Text>}
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.cancelBtn} onPress={() => setEditSaleModal(false)}>
                 <Text style={styles.cancelTxt}>Cancel</Text>
               </TouchableOpacity>
             </View>
@@ -929,7 +1012,7 @@ function VisitCard({ v, color, onLocPress, onEdit }) {
         <Text style={[styles.cardTitle, { flex: 1 }]}>{v.company_name}</Text>
         {onEdit && v.edit_status !== 'pending' && (
           <TouchableOpacity onPress={onEdit} style={{ paddingLeft: 8, paddingTop: 2 }}>
-            <Text style={{ fontSize: 11, color: C.t2, fontWeight: '700' }}>✏️ Edit</Text>
+            <Text style={{ fontSize: 11, color: '#5D6D7E', fontWeight: '700' }}>✏️ Edit</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -970,7 +1053,7 @@ function DeliveryCard({ d, color, onEdit }) {
         <Text style={[styles.cardTitle, { flex: 1 }]}>{d.invoice_number}</Text>
         {onEdit && d.edit_status !== 'pending' && (
           <TouchableOpacity onPress={onEdit} style={{ paddingLeft: 8, paddingTop: 2 }}>
-            <Text style={{ fontSize: 11, color: C.t2, fontWeight: '700' }}>✏️ Edit</Text>
+            <Text style={{ fontSize: 11, color: '#5D6D7E', fontWeight: '700' }}>✏️ Edit</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -996,7 +1079,7 @@ function DeliveryCard({ d, color, onEdit }) {
   );
 }
 
-function SaleCard({ s, color }) {
+function SaleCard({ s, color, onEdit }) {
   const sc = s.status === 'paid'
     ? { bg: '#D5F5E3', txt: '#145A32', lbl: '✓ Paid' }
     : s.status === 'pending_approval'
@@ -1007,17 +1090,30 @@ function SaleCard({ s, color }) {
     : s.payment_method ? s.payment_method.charAt(0).toUpperCase() + s.payment_method.slice(1) : '—';
   return (
     <View style={[styles.card, styles.cardLeft, { borderLeftColor: color }]}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-        <Text style={styles.cardTitle}>{s.invoice_number}</Text>
-        {s.source === 'delivery' && (
-          <View style={[styles.badge, { backgroundColor: '#F4ECFB' }]}>
-            <Text style={[styles.badgeTxt, { color: '#5B2C6F' }]}>From Delivery</Text>
-          </View>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+          <Text style={styles.cardTitle}>{s.invoice_number}</Text>
+          {s.source === 'delivery' && (
+            <View style={[styles.badge, { backgroundColor: '#F4ECFB' }]}>
+              <Text style={[styles.badgeTxt, { color: '#5B2C6F' }]}>From Delivery</Text>
+            </View>
+          )}
+        </View>
+        {onEdit && s.edit_status !== 'pending' && (
+          <TouchableOpacity onPress={onEdit} style={{ paddingLeft: 8, paddingTop: 2 }}>
+            <Text style={{ fontSize: 11, color: '#5D6D7E', fontWeight: '700' }}>✏️ Edit</Text>
+          </TouchableOpacity>
         )}
       </View>
+      {s.company_name ? <Text style={styles.cardDetail}>Company: {s.company_name}</Text> : null}
       <Text style={styles.cardDetail}>Delivered to: {s.delivered_to}</Text>
       <Text style={styles.cardDetail}>Amount: {Number(s.amount || 0).toFixed(2)} OMR</Text>
       <Text style={styles.cardDetail}>Payment: {pmLabel}</Text>
+      {s.edit_status === 'pending' && (
+        <View style={[styles.badge, { backgroundColor: '#FFF8E1', marginTop: 6 }]}>
+          <Text style={[styles.badgeTxt, { color: '#7D6608' }]}>⏳ Edit pending approval</Text>
+        </View>
+      )}
       <View style={[styles.badge, { backgroundColor: sc.bg, marginTop: 6 }]}>
         <Text style={[styles.badgeTxt, { color: sc.txt }]}>{sc.lbl}</Text>
       </View>
@@ -1027,79 +1123,78 @@ function SaleCard({ s, color }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: C.bg },
+  container: { flex: 1, backgroundColor: '#F4F5F7' },
   header: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: C.white,
+    flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF',
     paddingTop: Platform.OS === 'ios' ? 54 : 36,
     paddingBottom: 14, paddingHorizontal: 16,
     borderBottomWidth: 1, borderBottomColor: '#EBEBEB',
   },
-  greeting: { fontSize: 18, fontWeight: '800', color: C.t1 },
-  headerSub: { fontSize: 12, color: C.t2, marginTop: 2 },
+  greeting: { fontSize: 18, fontWeight: '800', color: '#1A252F' },
+  headerSub: { fontSize: 12, color: '#5D6D7E', marginTop: 2 },
   logoutBtn: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: '#DDD' },
-  logoutTxt: { fontSize: 12, fontWeight: '700', color: C.destroy },
+  logoutTxt: { fontSize: 12, fontWeight: '700', color: '#EA4335' },
   scroll: { flex: 1, padding: 14 },
-  sectionLabel: { fontSize: 10, fontWeight: '700', color: C.t2, letterSpacing: 0.8, marginBottom: 10, marginTop: 4 },
-  resultCount: { fontSize: 11, color: C.t2, marginBottom: 8 },
+  sectionLabel: { fontSize: 10, fontWeight: '700', color: '#5D6D7E', letterSpacing: 0.8, marginBottom: 10, marginTop: 4 },
+  resultCount: { fontSize: 11, color: '#5D6D7E', marginBottom: 8 },
   trackPill: { flexDirection: 'row', alignItems: 'center', gap: 10, width: '100%', height: 60, borderRadius: 30, justifyContent: 'center', marginTop: 8 },
   trackDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: 'rgba(255,255,255,0.7)' },
   trackPillTxt: { fontSize: 15, fontWeight: '800', color: '#fff' },
   trackHint: { fontSize: 11, marginTop: 10, fontWeight: '600' },
-  targetAchieved: { fontSize: 22, fontWeight: '800', color: C.navy },
-  targetSlash: { fontSize: 13, fontWeight: '600', color: C.t2, marginBottom: 2 },
+  targetAchieved: { fontSize: 22, fontWeight: '800', color: '#2C3E50' },
+  targetSlash: { fontSize: 13, fontWeight: '600', color: '#5D6D7E', marginBottom: 2 },
   targetBarBg: { height: 8, backgroundColor: '#E8EAED', borderRadius: 4, marginTop: 10, overflow: 'hidden' },
-  targetBarFill: { height: 8, backgroundColor: C.green, borderRadius: 4 },
+  targetBarFill: { height: 8, backgroundColor: '#27AE60', borderRadius: 4 },
   statsRow: { flexDirection: 'row', gap: 8, marginBottom: 14 },
-  statCard: { flex: 1, backgroundColor: C.white, borderRadius: 14, padding: 14, alignItems: 'center', ...shadow },
+  statCard: { flex: 1, backgroundColor: '#FFFFFF', borderRadius: 14, padding: 14, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.07, shadowRadius: 10, elevation: 3 },
   statVal: { fontSize: 24, fontWeight: '800' },
-  statLbl: { fontSize: 10, fontWeight: '600', color: C.t2, marginTop: 3, textTransform: 'uppercase', letterSpacing: 0.4 },
-  card: { backgroundColor: C.white, borderRadius: 16, padding: 14, marginBottom: 10, ...shadow },
+  statLbl: { fontSize: 10, fontWeight: '600', color: '#5D6D7E', marginTop: 3, textTransform: 'uppercase', letterSpacing: 0.4 },
+  card: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 14, marginBottom: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.07, shadowRadius: 10, elevation: 3 },
   cardLeft: { borderLeftWidth: 4, paddingLeft: 14 },
-  cardTitle: { fontSize: 14, fontWeight: '700', color: C.t1, marginBottom: 4 },
-  cardDetail: { fontSize: 12, color: C.t2, marginTop: 2, lineHeight: 18 },
-  cardTime: { fontSize: 10, color: C.t3, marginTop: 8 },
+  cardTitle: { fontSize: 14, fontWeight: '700', color: '#1A252F', marginBottom: 4 },
+  cardDetail: { fontSize: 12, color: '#5D6D7E', marginTop: 2, lineHeight: 18 },
+  cardTime: { fontSize: 10, color: '#AAB7C4', marginTop: 8 },
   badge: { alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 },
   badgeTxt: { fontSize: 11, fontWeight: '700' },
   locBtn: { marginTop: 8 },
-  locBtnTxt: { fontSize: 12, color: C.red, fontWeight: '600' },
+  locBtnTxt: { fontSize: 12, color: '#C0392B', fontWeight: '600' },
   filterScroll: { paddingHorizontal: 14, paddingVertical: 10, flexGrow: 0 },
-  filterPill: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, backgroundColor: C.white, marginRight: 8, borderWidth: 1, borderColor: '#DDD' },
-  filterPillOn: { backgroundColor: C.red, borderColor: C.red },
-  filterPillTxt: { fontSize: 12, fontWeight: '600', color: C.t2 },
+  filterPill: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, backgroundColor: '#FFFFFF', marginRight: 8, borderWidth: 1, borderColor: '#DDD' },
+  filterPillOn: { backgroundColor: '#C0392B', borderColor: '#C0392B' },
+  filterPillTxt: { fontSize: 12, fontWeight: '600', color: '#5D6D7E' },
   filterPillTxtOn: { color: '#fff' },
-  searchBar: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: C.white, borderRadius: 12, paddingHorizontal: 12, height: 42, borderWidth: 1, borderColor: '#E8EAED' },
+  searchBar: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#FFFFFF', borderRadius: 12, paddingHorizontal: 12, height: 42, borderWidth: 1, borderColor: '#E8EAED' },
   searchIcon: { fontSize: 14 },
-  searchInput: { flex: 1, fontSize: 13, color: C.t1 },
-  tabBar: { flexDirection: 'row', backgroundColor: C.white, borderTopWidth: 1, borderTopColor: '#EBEBEB', paddingBottom: Platform.OS === 'ios' ? 24 : 8, paddingTop: 8 },
+  searchInput: { flex: 1, fontSize: 13, color: '#1A252F' },
+  tabBar: { flexDirection: 'row', backgroundColor: '#FFFFFF', borderTopWidth: 1, borderTopColor: '#EBEBEB', paddingTop: 8 },
   tabItem: { flex: 1, alignItems: 'center', gap: 2, position: 'relative' },
   tabIcon: { fontSize: 20 },
-  tabLabel: { fontSize: 10, fontWeight: '600', color: C.t3 },
-  tabLabelOn: { color: C.red },
-  tabIndicator: { position: 'absolute', bottom: -8, width: 20, height: 3, backgroundColor: C.red, borderRadius: 2 },
-  fab: { position: 'absolute', bottom: 90, right: 18, width: 52, height: 52, borderRadius: 26, backgroundColor: C.red, alignItems: 'center', justifyContent: 'center', shadowColor: C.red, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 10, elevation: 8 },
+  tabLabel: { fontSize: 10, fontWeight: '600', color: '#AAB7C4' },
+  tabLabelOn: { color: '#C0392B' },
+  tabIndicator: { position: 'absolute', bottom: -8, width: 20, height: 3, backgroundColor: '#C0392B', borderRadius: 2 },
+  fab: { position: 'absolute', bottom: 90, right: 18, width: 52, height: 52, borderRadius: 26, backgroundColor: '#C0392B', alignItems: 'center', justifyContent: 'center', shadowColor: '#C0392B', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 10, elevation: 8 },
   fabTxt: { color: '#fff', fontSize: 28, fontWeight: '300', lineHeight: 32 },
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.42)', justifyContent: 'flex-end' },
-  sheet: { backgroundColor: C.white, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: Platform.OS === 'ios' ? 36 : 24 },
+  sheet: { backgroundColor: '#FFFFFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: Platform.OS === 'ios' ? 36 : 24 },
   sheetHandle: { width: 38, height: 4, backgroundColor: '#DDD', borderRadius: 2, alignSelf: 'center', marginBottom: 12 },
-  sheetTitle: { fontSize: 18, fontWeight: '800', color: C.red, textAlign: 'center', marginBottom: 4 },
-  sheetSub: { fontSize: 13, color: C.t2, textAlign: 'center', marginBottom: 16 },
-  label: { fontSize: 12, fontWeight: '700', color: C.t2, marginBottom: 6, marginTop: 8 },
-  req: { color: C.red },
-  input: { height: 46, backgroundColor: '#F4F5F7', borderRadius: 12, paddingHorizontal: 14, fontSize: 14, color: C.t1, borderWidth: 1, borderColor: '#E8EAED' },
+  sheetTitle: { fontSize: 18, fontWeight: '800', color: '#C0392B', textAlign: 'center', marginBottom: 4 },
+  sheetSub: { fontSize: 13, color: '#5D6D7E', textAlign: 'center', marginBottom: 16 },
+  label: { fontSize: 12, fontWeight: '700', color: '#5D6D7E', marginBottom: 6, marginTop: 8 },
+  req: { color: '#C0392B' },
+  input: { height: 46, backgroundColor: '#F4F5F7', borderRadius: 12, paddingHorizontal: 14, fontSize: 14, color: '#1A252F', borderWidth: 1, borderColor: '#E8EAED' },
   switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8, marginBottom: 4 },
   payRow: { flexDirection: 'row', gap: 8 },
   payOpt: { flex: 1, paddingVertical: 10, borderRadius: 10, borderWidth: 1.5, borderColor: '#DDD', alignItems: 'center' },
-  payOptSel: { borderColor: C.red, backgroundColor: C.redL },
-  payOptTxt: { fontSize: 12, fontWeight: '700', color: C.t2 },
-  payOptTxtSel: { color: C.red },
-  submitBtn: { height: 50, backgroundColor: C.red, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginTop: 8 },
+  payOptSel: { borderColor: '#C0392B', backgroundColor: '#FADBD8' },
+  payOptTxt: { fontSize: 12, fontWeight: '700', color: '#5D6D7E' },
+  payOptTxtSel: { color: '#C0392B' },
+  submitBtn: { height: 50, backgroundColor: '#C0392B', borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginTop: 8 },
   submitTxt: { color: '#fff', fontSize: 15, fontWeight: '800' },
   cancelBtn: { alignItems: 'center', marginTop: 12, paddingBottom: 4 },
-  cancelTxt: { color: C.t2, fontSize: 14, fontWeight: '600' },
-  markPaidBtn: { marginTop: 10, backgroundColor: C.green, padding: 10, borderRadius: 10, alignItems: 'center' },
+  cancelTxt: { color: '#5D6D7E', fontSize: 14, fontWeight: '600' },
+  markPaidBtn: { marginTop: 10, backgroundColor: '#27AE60', padding: 10, borderRadius: 10, alignItems: 'center' },
   markPaidTxt: { color: '#fff', fontWeight: '700', fontSize: 13 },
   infoBox: { backgroundColor: '#FFF8E1', borderRadius: 10, padding: 10, marginTop: 8 },
   infoTxt: { fontSize: 12, color: '#7D6608', lineHeight: 18 },
-  empty: { textAlign: 'center', color: C.t3, marginTop: 40, fontSize: 14 },
+  empty: { textAlign: 'center', color: '#AAB7C4', marginTop: 40, fontSize: 14 },
 });
