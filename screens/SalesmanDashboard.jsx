@@ -114,6 +114,12 @@ export default function SalesmanDashboard({ route, navigation }) {
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState('home');
   const [tracking, setTracking] = useState(false);
+  const [startWorkModal, setStartWorkModal] = useState(false);
+  const [endWorkModal, setEndWorkModal] = useState(false);
+  const [vehicle, setVehicle] = useState('');
+  const [startKm, setStartKm] = useState('');
+  const [endKm, setEndKm] = useState('');
+  const [totalKm, setTotalKm] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const [visits, setVisits] = useState([]);
@@ -299,16 +305,44 @@ export default function SalesmanDashboard({ route, navigation }) {
     } catch (e) { console.log('loadNotPaid error:', e?.response?.data || e.message); }
   };
 
-  const toggleTracking = async () => {
+const toggleTracking = () => {
     if (tracking) {
-      Alert.alert('Stop Work', 'Mark your work as stopped?', [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Stop', style: 'destructive', onPress: async () => { await stopTracking(); setTracking(false); } }
-      ]);
+      setEndKm('');
+      setTotalKm(null);
+      setEndWorkModal(true);
     } else {
-      const started = await startTracking();
-      setTracking(started);
-      if (!started) Alert.alert('Permission needed', 'Allow location access in Settings.');
+      setVehicle('');
+      setStartKm('');
+      setStartWorkModal(true);
+    }
+  };
+
+  const confirmStartWork = async () => {
+    if (!vehicle.trim() || !startKm.trim()) {
+      Alert.alert('Missing info', 'Please enter the vehicle and starting KM.');
+      return;
+    }
+    const started = await startTracking(vehicle.trim(), Number(startKm));
+    setTracking(started);
+    setStartWorkModal(false);
+    if (!started) Alert.alert('Permission needed', 'Allow location access in Settings.');
+  };
+
+  const confirmEndWork = async () => {
+    if (!endKm.trim()) {
+      Alert.alert('Missing info', 'Please enter the ending KM.');
+      return;
+    }
+    await stopTracking(vehicle, Number(startKm), Number(endKm));
+    setTracking(false);
+    setEndWorkModal(false);
+  };
+
+  const handleEndKmBlur = () => {
+    if (endKm.trim() && startKm.trim()) {
+      setTotalKm(Number(endKm) - Number(startKm));
+    } else {
+      setTotalKm(null);
     }
   };
 
@@ -809,6 +843,58 @@ export default function SalesmanDashboard({ route, navigation }) {
                 {vLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitTxt}>Save Visit</Text>}
               </TouchableOpacity>
               <TouchableOpacity style={styles.cancelBtn} onPress={() => { setVisitModal(false); resetVisitForm(); }}>
+                <Text style={styles.cancelTxt}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
+
+{/* ── Start Work Modal ── */}
+      <Modal visible={startWorkModal} animationType="slide" transparent>
+        <View style={styles.overlay}>
+          <ScrollView keyboardShouldPersistTaps="handled">
+            <View style={styles.sheet}>
+              <View style={styles.sheetHandle} />
+              <Text style={styles.sheetTitle}>Start Work</Text>
+              <Text style={styles.label}>Vehicle <Text style={styles.req}>*</Text></Text>
+              <TextInput style={styles.input} placeholder="e.g. Toyota Hilux - 123456" placeholderTextColor={C.t3} value={vehicle} onChangeText={setVehicle} />
+              <Text style={styles.label}>Starting KM <Text style={styles.req}>*</Text></Text>
+              <TextInput style={styles.input} placeholder="Odometer reading" placeholderTextColor={C.t3} value={startKm} onChangeText={setStartKm} keyboardType="numeric" />
+              <TouchableOpacity style={styles.submitBtn} onPress={confirmStartWork}>
+                <Text style={styles.submitTxt}>Confirm & Start</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.cancelBtn} onPress={() => setStartWorkModal(false)}>
+                <Text style={styles.cancelTxt}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
+
+      {/* ── End Work Modal ── */}
+      <Modal visible={endWorkModal} animationType="slide" transparent>
+        <View style={styles.overlay}>
+          <ScrollView keyboardShouldPersistTaps="handled">
+            <View style={styles.sheet}>
+              <View style={styles.sheetHandle} />
+              <Text style={styles.sheetTitle}>End Work</Text>
+              <Text style={styles.label}>Vehicle</Text>
+              <Text style={[styles.input, { paddingTop: 12, color: C.t2 }]}>{vehicle || '-'}</Text>
+              <Text style={styles.label}>Starting KM</Text>
+              <Text style={[styles.input, { paddingTop: 12, color: C.t2 }]}>{startKm || '-'}</Text>
+              <Text style={styles.label}>Ending KM <Text style={styles.req}>*</Text></Text>
+              <TextInput style={styles.input} placeholder="Odometer reading" placeholderTextColor={C.t3}
+                value={endKm} onChangeText={setEndKm} onBlur={handleEndKmBlur} keyboardType="numeric" />
+              {totalKm !== null && (
+                <View style={styles.infoBox}>
+                  <Text style={styles.infoTxt}>Total distance travelled: {totalKm} KM</Text>
+                </View>
+              )}
+              <TouchableOpacity style={styles.submitBtn} onPress={confirmEndWork}>
+                <Text style={styles.submitTxt}>Confirm & End</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.cancelBtn} onPress={() => setEndWorkModal(false)}>
                 <Text style={styles.cancelTxt}>Cancel</Text>
               </TouchableOpacity>
             </View>
