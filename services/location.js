@@ -17,7 +17,7 @@ TaskManager.defineTask(LOCATION_TASK, async ({ data, error }) => {
   }
 });
 
-export const startTracking = async () => {
+export const startTracking = async (vehicle, start_km) => {
   const { status: fg } = await Location.requestForegroundPermissionsAsync();
   if (fg !== 'granted') return false;
 
@@ -36,14 +36,14 @@ export const startTracking = async () => {
     },
   });
 
-  await updateTrackingStatus(true);
+  await updateTrackingStatus(true, { vehicle, start_km });
   return true;
 };
 
-export const stopTracking = async () => {
+export const stopTracking = async (vehicle, start_km, end_km) => {
   try {
     await Location.stopLocationUpdatesAsync(LOCATION_TASK);
-    await updateTrackingStatus(false);
+    await updateTrackingStatus(false, { vehicle, start_km, end_km });
   } catch (e) {
     console.log('Stop tracking error:', e.message);
   }

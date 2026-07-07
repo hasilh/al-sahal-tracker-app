@@ -29,9 +29,9 @@ export const getLatestLocations = async () => {
 };
 
 // Tracking status
-export const updateTrackingStatus = async (is_tracking) => {
+export const updateTrackingStatus = async (is_tracking, extra = {}) => {
   const token = await getToken();
-  await axios.post(`${BASE_URL}/api/tracking/status`, { is_tracking }, {
+  await axios.post(`${BASE_URL}/api/tracking/status`, { is_tracking, ...extra }, {
     headers: { Authorization: `Bearer ${token}` }
   });
 };
